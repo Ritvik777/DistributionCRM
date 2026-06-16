@@ -1,4 +1,5 @@
-from vector_db import add_documents, get_document_count, extract_text_from_pdf
+from vector_db import add_documents, add_chunks, get_document_count
+from vector_db.chunker import extract_chunks_from_pdf, extract_chunks_from_excel, extract_chunks_from_csv
 
 
 def get_doc_count() -> int:
@@ -6,11 +7,22 @@ def get_doc_count() -> int:
 
 
 def add_text_documents(raw_text: str) -> int:
-    lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
-    if not lines:
+    text = raw_text.strip()
+    if not text:
         return 0
-    return add_documents(lines)
+    return add_documents([text], source="pasted text", doc_type="text")
 
 
 def add_pdf_document(pdf_file) -> int:
-    return add_documents([extract_text_from_pdf(pdf_file)])
+    source = getattr(pdf_file, "name", "PDF")
+    return add_chunks(extract_chunks_from_pdf(pdf_file, source=source))
+
+
+def add_excel_document(excel_file) -> int:
+    source = getattr(excel_file, "name", "Excel")
+    return add_chunks(extract_chunks_from_excel(excel_file, source=source))
+
+
+def add_csv_document(csv_file) -> int:
+    source = getattr(csv_file, "name", "CSV")
+    return add_chunks(extract_chunks_from_csv(csv_file, source=source))

@@ -8,6 +8,9 @@ grandalf
 qdrant-client
 python-dotenv
 pypdf
+pdfplumber
+openpyxl
+langchain-text-splitters
 duckduckgo-search
 requests
 sendgrid

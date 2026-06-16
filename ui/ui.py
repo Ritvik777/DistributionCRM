@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, UTC
 import os
 from uuid import uuid4
-from services.vector_db_service import add_text_documents, add_pdf_document
+from services.vector_db_service import add_text_documents, add_pdf_document, add_excel_document, add_csv_document
 from services.agent_service import ask_agent, load_graph_image, load_graph_ascii
 from observability import start_chat_session, get_console_links
 
@@ -200,9 +200,9 @@ def _render_stats(doc_count: int) -> None:
 def _render_doc_upload() -> None:
     with st.expander("📄 Add Knowledge Base Docs", expanded=False):
         text_input = st.text_area(
-            "Paste product docs, one per line:",
+            "Paste product docs or quotation notes:",
             height=140,
-            placeholder="Paste your Galileo product docs here...",
+            placeholder="Paste product descriptions, pricing notes, or policy text...",
         )
         if st.button("➕ Add Text", use_container_width=True):
             if text_input.strip():
@@ -216,15 +216,29 @@ def _render_doc_upload() -> None:
             else:
                 st.warning("Paste some text first.")
 
-        pdf_file = st.file_uploader("Or upload a PDF", type=["pdf"], label_visibility="collapsed")
-        if pdf_file and st.button("📎 Add PDF", use_container_width=True):
+        st.caption("Upload price quotations — each product row becomes its own searchable chunk.")
+        quotation_file = st.file_uploader(
+            "Upload PDF or Excel quotation",
+            type=["pdf", "xlsx", "csv"],
+            label_visibility="collapsed",
+        )
+        if quotation_file and st.button("📎 Add Quotation", use_container_width=True):
             try:
-                with st.spinner("Processing..."):
-                    count = add_pdf_document(pdf_file)
-                st.success(f"Added {count} chunks!")
+                with st.spinner("Processing quotation..."):
+                    suffix = quotation_file.name.rsplit(".", 1)[-1].lower()
+                    if suffix == "pdf":
+                        count = add_pdf_document(quotation_file)
+                    elif suffix == "csv":
+                        count = add_csv_document(quotation_file)
+                    else:
+                        count = add_excel_document(quotation_file)
+                if count:
+                    st.success(f"Added {count} chunks!")
+                else:
+                    st.warning("No product rows found in that file.")
                 st.rerun()
             except Exception as error:
-                st.error(f"Could not add PDF: {error}")
+                st.error(f"Could not add quotation: {error}")
 
 
 def _render_graph() -> None:
