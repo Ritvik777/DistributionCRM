@@ -13,8 +13,12 @@ GALILEO_API_KEY = os.getenv("GALILEO_API_KEY")
 GALILEO_PROJECT = os.getenv("GALILEO_PROJECT")
 GALILEO_LOG_STREAM = os.getenv("GALILEO_LOG_STREAM")
 GALILEO_CONSOLE_URL = os.getenv("GALILEO_CONSOLE_URL")
-EMBEDDING_MODEL = "models/gemini-embedding-001"
-COLLECTION_NAME = "my_documents"
-EMBEDDING_SIZE = 3072
+COLLECTION_NAME = "Rama"
+# Qdrant Cloud Inference: embeddings are generated server-side (no local model, no external API).
+DENSE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+SPARSE_MODEL = "Qdrant/bm25"
+DENSE_VECTOR_NAME = "dense"
+SPARSE_VECTOR_NAME = "sparse"
+EMBEDDING_SIZE = 384  # all-MiniLM-L6-v2 output dimension
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200

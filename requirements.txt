@@ -1,8 +1,6 @@
 streamlit
 langchain
-langchain-google-genai
 langchain-anthropic
-langchain-qdrant
 langgraph
 grandalf
 qdrant-client
