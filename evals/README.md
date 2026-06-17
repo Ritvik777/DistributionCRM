@@ -12,7 +12,6 @@ Runtime flow is: classify request -> run branch nodes -> apply gate logic -> pro
 |---|---|
 | Galileo (tracing + evals) | [app.galileo.ai](https://app.galileo.ai/) |
 | Anthropic API | [console.anthropic.com](https://console.anthropic.com/) |
-| Google AI Studio (embedding key) | [makersuite.google.com/app/apikey](https://makersuite.google.com/app/apikey) |
 | Qdrant Cloud | [cloud.qdrant.io](https://cloud.qdrant.io/) |
 | LangGraph Docs | [LangGraph documentation](https://langchain-ai.github.io/langgraph/) |
 | Streamlit Docs | [docs.streamlit.io](https://docs.streamlit.io/) |
@@ -38,7 +37,7 @@ Runtime flow is: classify request -> run branch nodes -> apply gate logic -> pro
   - `agents/gtm_agent/nodes.py`
   - `agents/outreach_agent/nodes.py`
   - `agents/tools.py`
-  - Each uses `@log_span(...)`; LLM invokes use `get_langchain_config(...)`
+  - LLM invokes use `merge_node_config(...)`; `send_email` uses `@log_span(...)`
 
 - `ui/ui.py`
   - Starts one Galileo session per new chat thread via `start_chat_session(...)`
@@ -80,7 +79,7 @@ The shared state lives in `agents/state.py` (`question`, `agent_type`, `context`
 
 ## What this eval suite checks
 
-`run_galileo_evals.py` currently uses **17 synthetic test prompts** across:
+`run_galileo_evals.py` currently uses **10 synthetic test prompts** across:
 
 - GTM product + pricing behavior
 - Outreach draft generation behavior
@@ -132,7 +131,6 @@ cp .env.example .env
 3. Fill required `.env` values
 
 - Core app:
-  - `GOOGLE_API_KEY`
   - `ANTHROPIC_API_KEY`
   - `QDRANT_URL`
   - `QDRANT_API_KEY`

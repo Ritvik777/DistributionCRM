@@ -6,8 +6,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 from config import CHUNK_SIZE, CHUNK_OVERLAP
 
 
@@ -28,12 +26,16 @@ _PRICE_HINT = re.compile(r"\b(price|rate|amount|total|cost|mrp)\b", re.IGNORECAS
 _NAME_HINT = re.compile(r"\b(product|description|name|service)\b", re.IGNORECASE)
 
 
-def _splitter(chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> RecursiveCharacterTextSplitter:
-    return RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=overlap,
-        separators=["\n\n", "\n", ". ", " ", ""],
-    )
+def _split_at_boundary(text: str, chunk_size: int) -> int:
+    """Return end index for a chunk, preferring natural break points."""
+    if len(text) <= chunk_size:
+        return len(text)
+    window = text[:chunk_size]
+    for sep in ("\n\n", "\n", ". ", " "):
+        idx = window.rfind(sep)
+        if idx > chunk_size // 2:
+            return idx + len(sep)
+    return chunk_size
 
 
 def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
@@ -42,7 +44,18 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
         return []
     if len(cleaned) <= chunk_size:
         return [cleaned]
-    return _splitter(chunk_size, overlap).split_text(cleaned)
+
+    chunks: list[str] = []
+    start = 0
+    while start < len(cleaned):
+        end = start + _split_at_boundary(cleaned[start:], chunk_size)
+        piece = cleaned[start : start + end].strip()
+        if piece:
+            chunks.append(piece)
+        if start + end >= len(cleaned):
+            break
+        start = max(start + 1, start + end - overlap)
+    return chunks
 
 
 def _looks_numeric(value: Any) -> bool:

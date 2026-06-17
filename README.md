@@ -69,9 +69,8 @@ agents/router_agent/nodes.py    # classify + route
 agents/gtm_agent/nodes.py       # GTM branch nodes
 agents/outreach_agent/nodes.py  # Outreach branch nodes
 agents/tools.py                 # KB/web/Apollo/Brevo tools + tool loop
-vector_db/database.py           # Qdrant store/search and collection checks
+vector_db/database.py           # Qdrant hybrid search (dense + BM25 via Cloud Inference)
 vector_db/chunker.py            # text/pdf chunking
-vector_db/embeddings.py         # Gemini embeddings model
 observability/galileo.py        # tracing/session setup
 evals/run_galileo_evals.py      # baseline evaluation suite
 ```
@@ -91,9 +90,8 @@ evals/run_galileo_evals.py      # baseline evaluation suite
 | `agents/gtm_agent/nodes.py` | GTM branch nodes: retrieve, pricing/email gates, and GTM answer generation. |
 | `agents/outreach_agent/nodes.py` | Outreach branch nodes: research, draft generation, send gate, send execution. |
 | `agents/tools.py` | Shared tools and tool-routing loop (`search_knowledge_base`, `web_search`, `apollo_search`, `send_email`). |
-| `vector_db/database.py` | Qdrant setup, collection checks, add/search/count operations. |
-| `vector_db/chunker.py` | Text chunking and PDF extraction utilities. |
-| `vector_db/embeddings.py` | Gemini embedding model setup. |
+| `vector_db/database.py` | Qdrant setup, hybrid search (dense + BM25), add/count operations. |
+| `vector_db/chunker.py` | Text chunking and PDF/Excel/CSV extraction utilities. |
 | `llm.py` | Anthropic model factory and env validation. |
 | `config.py` | Global config/env variable loading. |
 | `observability/galileo.py` | Galileo SDK integration for spans, callbacks, traces, sessions, and console links. |
@@ -108,7 +106,7 @@ evals/run_galileo_evals.py      # baseline evaluation suite
 |---|---|
 | Orchestration | LangGraph |
 | LLM | Anthropic (`ChatAnthropic`) |
-| Embeddings | Google Gemini embeddings (`gemini-embedding-001`) |
+| Embeddings | Qdrant Cloud Inference (`all-MiniLM-L6-v2` dense + BM25 sparse) |
 | Vector DB | Qdrant Cloud |
 | Web Search | DuckDuckGo |
 | Leads | Apollo API |
@@ -134,9 +132,9 @@ Galileo integration in this repo is centralized and explicit:
   - Starts top trace with `logger.start_trace(...)`
   - Concludes and flushes with `logger.conclude(...)` + `logger.flush()`
 
-- **Node + tool spans:** `agents/router_agent/nodes.py`, `agents/gtm_agent/nodes.py`, `agents/outreach_agent/nodes.py`, `agents/tools.py`
-  - Nodes/tools are decorated with `@log_span(...)`
-  - LLM calls pass `config=get_langchain_config(...)` for callback-level tracing metadata
+- **Node + tool tracing:** `agents/router_agent/nodes.py`, `agents/gtm_agent/nodes.py`, `agents/outreach_agent/nodes.py`, `agents/tools.py`
+  - LLM/tool calls pass `merge_node_config(...)` so `GalileoCallback` captures spans
+  - `send_email` also uses `@log_span(...)`; `call_tools` intentionally does not (avoids duplicate spans with retrieve nodes)
 
 - **UI session wiring:** `ui/ui.py`
   - `handle_new_prompt(...)` starts one Galileo session per fresh chat via `start_chat_session(...)`
@@ -158,7 +156,6 @@ Required Galileo env vars are in `.env.example`:
 |---|---|
 | Galileo (observability/evals) | [app.galileo.ai](https://app.galileo.ai/) |
 | Anthropic API Console | [console.anthropic.com](https://console.anthropic.com/) |
-| Google AI Studio (API key for embeddings) | [makersuite.google.com/app/apikey](https://makersuite.google.com/app/apikey) |
 | Qdrant Cloud | [cloud.qdrant.io](https://cloud.qdrant.io/) |
 | LangGraph Docs | [LangGraph documentation](https://langchain-ai.github.io/langgraph/) |
 | Streamlit Docs | [docs.streamlit.io](https://docs.streamlit.io/) |
@@ -185,7 +182,6 @@ cp .env.example .env
 Fill `.env` with your values:
 
 - Core:
-  - `GOOGLE_API_KEY`
   - `ANTHROPIC_API_KEY`
   - `QDRANT_URL`
   - `QDRANT_API_KEY`

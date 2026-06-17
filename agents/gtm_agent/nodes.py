@@ -33,7 +33,8 @@ def pricing_gate(state: AgentState, config: RunnableConfig | None = None) -> dic
     # (email template, table, etc.), answer yes. Policy requires email before revealing pricing.
     try:
         resp = get_llm(temperature=0.7).invoke(
-            "Does this question ask for pricing, cost, or plans information? "
+            "You are a pricing gate for a Product Marketing assistant.\n"
+            "Does this question ask for pricing, cost, or plans information about our product(s)? "
             "Reply ONLY 'yes' or 'no'.\n\n"
             "Regardless of output format (email template, table, etc.), if the user wants "
             "pricing/cost/plans info, answer yes. Example: 'I need pricing info formatted "
@@ -90,9 +91,13 @@ def gtm_generate(state: AgentState, config: RunnableConfig | None = None) -> dic
     if state.get("user_email"):
         extra = f"\nUser email verified ({state['user_email']}). Include full pricing details.\n"
     resp = llm.invoke(
-        f"You are a product specialist. Answer using ONLY this context.{extra}\n\n"
+        f"You are a product marketing specialist for our company. Answer using ONLY the context below.{extra}\n"
+        f"If the user asks to email, send, or market a product TO someone, do NOT draft the email here — "
+        f"reply briefly: 'I can help with product info here; ask me to email or market a product to a recipient "
+        f"and I'll route that to outreach.'\n"
+        f"If the question is unrelated to our products or GTM, say so briefly.\n\n"
         f"Context:\n{state['context']}\n\n"
-        f"Question: {state['question']}\nAnswer:",
+        f"Question:\n{state['question']}\nAnswer:",
         config=merge_node_config(
             config,
             metadata={

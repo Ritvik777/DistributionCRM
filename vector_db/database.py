@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from qdrant_client import QdrantClient, models
@@ -12,6 +13,8 @@ from config import (
     SPARSE_VECTOR_NAME,
 )
 from vector_db.chunker import chunk_text, Chunk
+
+logger = logging.getLogger(__name__)
 
 # cloud_inference=True makes Qdrant generate embeddings server-side from raw text
 # (models.Document), so we don't run any local embedding model or external API.
@@ -132,7 +135,8 @@ def search_with_scores(query: str, top_k: int = 8) -> list[tuple[str, float]]:
             with_payload=True,
         )
         return [(p.payload.get(CONTENT_KEY, ""), p.score) for p in result.points if p.payload]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Qdrant search failed: %s", exc)
         return []
 
 

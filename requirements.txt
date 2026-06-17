@@ -5,10 +5,10 @@ langgraph
 grandalf
 qdrant-client
 python-dotenv
+numpy<2
 pypdf
 pdfplumber
 openpyxl
-langchain-text-splitters
 duckduckgo-search
 requests
 galileo

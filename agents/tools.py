@@ -2,7 +2,7 @@ from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from vector_db import search_with_scores
 from llm import get_llm
-from observability import get_langchain_config, merge_node_config, log_span
+from observability import merge_node_config, log_span
 import json
 
 

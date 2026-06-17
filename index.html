@@ -423,7 +423,7 @@
       <div class="chip-row">
         <span class="chip">LangGraph</span>
         <span class="chip">Supervisor Routing Agent + GTM + Outreach</span>
-        <span class="chip">Qdrant + Gemini Embeddings</span>
+        <span class="chip">Qdrant Cloud Inference</span>
         <span class="chip">Anthropic LLM</span>
         <span class="chip">Galileo Tracing + Evals</span>
       </div>
@@ -443,7 +443,7 @@
       <article class="kpi"><strong>3</strong><span>Agent roles</span></article>
       <article class="kpi"><strong>9</strong><span>LangGraph nodes</span></article>
       <article class="kpi"><strong>4</strong><span>Core tools</span></article>
-      <article class="kpi"><strong>17</strong><span>Eval prompts</span></article>
+      <article class="kpi"><strong>10</strong><span>Eval prompts</span></article>
     </section>
 
     <section class="section">
@@ -474,8 +474,7 @@
           <tr><td><span class="mono">agents/outreach_agent/nodes.py</span></td><td>Outreach branch: research, draft generation, send gate, optional Brevo send.</td></tr>
           <tr><td><span class="mono">agents/tools.py</span></td><td>All 4 tools: <span class="mono">search_knowledge_base</span> (Qdrant), <span class="mono">web_search</span> (DuckDuckGo), <span class="mono">apollo_search</span> (Apollo), <span class="mono">send_email</span> (Brevo) + tool-calling loop.</td></tr>
           <tr><td><span class="mono">vector_db/database.py</span></td><td>Qdrant client setup, collection validation, add/search/count methods.</td></tr>
-          <tr><td><span class="mono">vector_db/chunker.py</span></td><td>Text chunking and PDF extraction for indexing documents.</td></tr>
-          <tr><td><span class="mono">vector_db/embeddings.py</span></td><td>Gemini embedding model factory used by vector store operations.</td></tr>
+          <tr><td><span class="mono">vector_db/chunker.py</span></td><td>Text chunking and PDF/Excel/CSV extraction for indexing documents.</td></tr>
           <tr><td><span class="mono">llm.py</span></td><td>Anthropic LLM loader with config/env validation.</td></tr>
           <tr><td><span class="mono">config.py</span></td><td>Central configuration and environment variable loading.</td></tr>
           <tr><td><span class="mono">observability/galileo.py</span></td><td>Galileo SDK integration: init, callbacks, spans, sessions, logger helpers.</td></tr>
@@ -689,7 +688,7 @@ def get_llm(temperature=0.7):
         <tbody>
           <tr><td>Orchestration</td><td><span class="mono">LangGraph</span></td><td>Node graph in <span class="mono">agents/graph.py</span> with conditional edges for routing.</td></tr>
           <tr><td>Generation LLM</td><td><span class="mono">ChatAnthropic</span></td><td>Used in supervisor routing, gates, and generation nodes via <span class="mono">llm.py</span>.</td></tr>
-          <tr><td>Embeddings</td><td><span class="mono">Google Gemini Embeddings</span></td><td>Converts knowledge docs into vectors for Qdrant retrieval.</td></tr>
+          <tr><td>Embeddings</td><td><span class="mono">Qdrant Cloud Inference</span></td><td>Server-side hybrid dense (<span class="mono">all-MiniLM-L6-v2</span>) + sparse (BM25) vectors — no separate embedding API key.</td></tr>
           <tr><td>Vector Store</td><td><span class="mono">Qdrant Cloud</span></td><td>Stores chunks and returns similarity-scored context for tool calls.</td></tr>
           <tr><td>Web Research</td><td><span class="mono">DuckDuckGo</span></td><td><code>web_search</code> — live web for market/competitor context.</td></tr>
           <tr><td>Leads + Email</td><td><span class="mono">Apollo</span> + <span class="mono">Brevo</span></td><td><code>apollo_search</code> (leads by job/industry), <code>send_email</code> (outreach send path).</td></tr>
@@ -789,7 +788,7 @@ def get_llm(temperature=0.7):
           <ol class="step-list">
             <li><span class="mono">gtm_retrieve</span> gathers internal + web context.</li>
             <li><span class="mono">pricing_gate</span> decides if email verification is required.</li>
-            <li><span class="mono">collect_email</span> extracts/validates email from question text.</li>
+            <li><span class="mono">collect_email</span> extracts email from question text.</li>
             <li><span class="mono">gtm_generate</span> composes final grounded answer.</li>
           </ol>
         </article>
@@ -827,7 +826,7 @@ def get_llm(temperature=0.7):
             <li><span class="mono">observability/galileo.py</span> is the integration hub for initialization, callbacks, spans, and logger access.</li>
             <li><span class="mono">ensure_galileo_initialized()</span> connects project + log stream once.</li>
             <li><span class="mono">get_langchain_config()</span> injects <span class="mono">GalileoCallback</span> into LLM/tool invokes.</li>
-            <li><span class="mono">@log_span(...)</span> decorates nodes/tools so every step is captured as a named span.</li>
+            <li><span class="mono">merge_node_config(...)</span> injects <span class="mono">GalileoCallback</span> on LLM/tool invokes; <span class="mono">send_email</span> also uses <span class="mono">@log_span(...)</span>.</li>
             <li><span class="mono">agents/__init__.py::ask()</span> starts top-level trace (<span class="mono">start_trace</span>) and concludes/flushes it.</li>
             <li><span class="mono">ui/ui.py</span> starts one Galileo session per fresh chat thread.</li>
           </ul>
@@ -876,8 +875,7 @@ def get_llm(temperature=0.7):
         <tbody>
           <tr><td>Galileo</td><td>Tracing, session logs, and experiment/eval tracking</td><td><a href="https://app.galileo.ai/">app.galileo.ai</a></td></tr>
           <tr><td>Anthropic</td><td>Primary chat model runtime for routing/generation logic</td><td><a href="https://console.anthropic.com/">console.anthropic.com</a></td></tr>
-          <tr><td>Google AI Studio</td><td>API key source for Gemini embedding model</td><td><a href="https://makersuite.google.com/app/apikey">makersuite.google.com/app/apikey</a></td></tr>
-          <tr><td>Qdrant Cloud</td><td>Vector storage and semantic retrieval</td><td><a href="https://cloud.qdrant.io/">cloud.qdrant.io</a></td></tr>
+          <tr><td>Qdrant Cloud</td><td>Vector storage, hybrid search, and server-side embeddings</td><td><a href="https://cloud.qdrant.io/">cloud.qdrant.io</a></td></tr>
           <tr><td>LangGraph</td><td>State graph orchestration and conditional routing</td><td><a href="https://langchain-ai.github.io/langgraph/">LangGraph docs</a></td></tr>
           <tr><td>Streamlit</td><td>Application UI and interactive chat view</td><td><a href="https://docs.streamlit.io/">docs.streamlit.io</a></td></tr>
           <tr><td>Apollo</td><td>Lead search and enrichment in outreach flow</td><td><a href="https://www.apollo.io/">apollo.io</a></td></tr>

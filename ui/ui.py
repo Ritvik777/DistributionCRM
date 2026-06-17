@@ -117,7 +117,8 @@ BADGES = {
     "gtm": ("🎯 GTM Agent", "badge-gtm"),
     "outreach": ("📝 Outreach Agent", "badge-outreach"),
 }
-SEND_WORDS = ["send", "market", "deliver", "mail them", "email them"]
+SEND_WORDS = ["send it", "send now", "go ahead and send", "yes send", "please send"]
+MAX_HISTORY_MESSAGES = 10
 
 
 def apply_styles() -> None:
@@ -316,16 +317,42 @@ def render_chat_history() -> None:
             _render_trace(message.get("trace", []))
 
 
+def _build_conversation_context() -> str:
+    """Prior chat turns (current user message is already the last entry in messages)."""
+    messages = st.session_state.messages
+    if len(messages) <= 1:
+        return ""
+    lines = []
+    for msg in messages[:-1][-MAX_HISTORY_MESSAGES:]:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        content = (msg.get("content") or "").strip()
+        if len(content) > 2000:
+            content = content[:2000] + "..."
+        if content:
+            lines.append(f"{role}: {content}")
+    return "\n\n".join(lines)
+
+
 def _build_agent_question(prompt: str) -> str:
+    parts = []
+    history = _build_conversation_context()
+    if history:
+        parts.append(f"=== Conversation history ===\n{history}\n=== End history ===")
+
     if st.session_state.awaiting_email:
-        return f"{st.session_state.pricing_question} My email is {prompt}"
+        parts.append(f"Current user message: {st.session_state.pricing_question} My email is {prompt}")
+        return "\n\n".join(parts)
+
     if st.session_state.pending_drafts and any(word in prompt.lower() for word in SEND_WORDS):
-        return (
-            f"{prompt}\n\n"
+        parts.append(
+            f"Current user message: {prompt}\n\n"
             "Here are the drafted emails to send:\n"
             f"{st.session_state.pending_drafts}"
         )
-    return prompt
+        return "\n\n".join(parts)
+
+    parts.append(f"Current user message: {prompt}")
+    return "\n\n".join(parts)
 
 
 def _update_session_from_result(prompt: str, result: dict) -> None:
@@ -337,8 +364,10 @@ def _update_session_from_result(prompt: str, result: dict) -> None:
         st.session_state.awaiting_email = False
         st.session_state.pricing_question = ""
 
-    if result.get("agent_type") == "outreach" and result.get("answer"):
+    if result.get("agent_type") == "outreach" and result.get("answer") and not result.get("send_requested"):
         st.session_state.pending_drafts = result["answer"]
+    elif result.get("send_requested"):
+        st.session_state.pending_drafts = ""
 
 
 def _push_assistant_message(result: dict) -> None:

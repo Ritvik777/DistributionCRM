@@ -1,15 +1,14 @@
 import logging
 import re
-from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-logger = logging.getLogger(__name__)
 from agents.state import AgentState
 from llm import get_llm
 from agents.tools import search_knowledge_base, web_search, apollo_search, send_email, call_tools
-#merges config for observability (metadata, tags).
 from observability import merge_node_config
+
+logger = logging.getLogger(__name__)
 
 
 EMAIL_PATTERN = r"[\w.+-]+@[\w-]+\.[\w.]+"
@@ -20,7 +19,8 @@ def _llm_leads_decision(question: str, config: RunnableConfig | None = None) -> 
     try:
         llm = get_llm(temperature=0)
         resp = llm.invoke(
-            "Decide whether the user wants to FIND LEADS/PROSPECTS (people or companies to contact).\n"
+            "You are a gate in a Product Marketing outreach assistant.\n"
+            "Decide whether the user wants to FIND LEADS/PROSPECTS for product outreach.\n"
             "Return exactly one word: leads or content.\n\n"
             "Rules:\n"
             "- leads: finding prospects, research leads, find companies, find people to contact, "
@@ -59,16 +59,57 @@ def _extract_emails(text: str) -> list[str]:
     return re.findall(EMAIL_PATTERN, text)
 
 
+def _body_to_html(body: str) -> str:
+    body = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", body)
+    body_html = "".join(
+        f'<p style="margin: 0 0 12px 0;">{p.strip()}</p>'
+        for p in body.split("\n\n")
+        if p.strip()
+    )
+    if not body_html:
+        body_html = body.replace("\n", "<br>")
+    return body_html
+
+
+def _parse_email_drafts(content: str) -> list[dict[str, str]]:
+    """Parse one or more email drafts (split by ---) with per-recipient subject/body."""
+    blocks = re.split(r"\n---+\n", content)
+    drafts: list[dict[str, str]] = []
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        emails = _extract_emails(block)
+        if not emails:
+            continue
+        subject_match = re.search(r"\*{0,2}Subject:?\*{0,2}\s*(.+)", block, re.IGNORECASE)
+        subject = (
+            subject_match.group(1).strip()
+            if subject_match
+            else "A personalized product introduction"
+        )
+        body = re.sub(r"^\*{0,2}To:?\*{0,2}.*\n?", "", block, flags=re.MULTILINE)
+        body = re.sub(r"^\*{0,2}Subject:?\*{0,2}.*\n?", "", body, flags=re.MULTILINE)
+        body = body.strip().strip("-").strip()
+        if body:
+            drafts.append({"to_email": emails[0], "subject": subject, "body": body})
+    return drafts
+
+
 def _llm_send_decision(question: str, draft: str, config: RunnableConfig | None = None) -> str | None:
     """LLM decides if user wants to send email now. Returns 'send' or 'review', or None on failure."""
     try:
         llm = get_llm(temperature=0.7)
         resp = llm.invoke(
-            "Decide whether the user is explicitly asking to SEND an email now.\n"
+            "You are a gate in a Product Marketing outreach assistant.\n"
+            "Decide whether the user is explicitly asking to SEND a marketing email now.\n"
             "Return exactly one word: send or review.\n\n"
             "Rules:\n"
-            "- send: explicit execution intent (e.g. send it, send now, send to <email>, go ahead and send)\n"
-            "- review: drafting, editing, brainstorming, or unclear intent\n"
+            "- send: ONLY when user explicitly wants immediate delivery of an existing draft "
+            "(e.g. 'send it', 'send now', 'go ahead and send', 'yes send it')\n"
+            "- review: user asks to write/draft/compose/can you email someone, first-time email requests, "
+            "or follow-ups to improve a draft — show draft only, do NOT send yet\n"
+            "- 'can you email X about Y' = review (compose first)\n"
             "- If uncertain, return review.\n\n"
             f"User message: {question}\n"
             f"Current draft preview: {draft[:400]}\n"
@@ -111,7 +152,7 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
             tools=[apollo_search, search_knowledge_base],
             config=config,
             system_prompt=(
-                "The user wants to find leads/prospects. You MUST:\n"
+                "You are a product marketing research assistant. The user wants to find leads/prospects for outreach. You MUST:\n"
                 "1. Call apollo_search with relevant job titles (e.g. 'VP Engineering, CTO, Head of AI') "
                 "and optionally an industry (e.g. 'computer software', 'artificial intelligence')\n"
                 "2. Call search_knowledge_base to get our product info for personalization\n\n"
@@ -125,9 +166,11 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
             tools=[search_knowledge_base, web_search],
             config=config,
             system_prompt=(
-                "Find product info and target audience data for creating content. "
-                "Use search_knowledge_base for product talking points. "
-                "Use web_search for company/industry info to personalize."
+                "You are a product marketing research assistant preparing outreach content.\n"
+                "Use search_knowledge_base for product specs, SKU/part numbers, stock, price, MOQ, and lead time. "
+                "If the user emails someone about a product (or conversation history mentions one), search the KB "
+                "for that product name or SKU — do NOT skip search_knowledge_base.\n"
+                "Use web_search only for target company/industry info to personalize."
             ),
         )
         path_label = "content"
@@ -143,8 +186,9 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
 
     if has_leads:
         prompt = (
+            "You are a product marketing outreach specialist. "
             "You found REAL leads from Apollo with their emails. "
-            "For EACH lead that has an email, write a personalized email.\n\n"
+            "For EACH lead that has an email, write a personalized product outreach email.\n\n"
             "Rules:\n"
             "- Write ONLY emails, NOT LinkedIn posts\n"
             "- Use their actual name, title, company, and industry\n"
@@ -179,16 +223,19 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             "'Pricing questions require email verification. Please ask for pricing directly and provide your work email.'"
         )
         prompt = (
-            "You are a content specialist. Create EXACTLY what the user asks for.\n"
+            "You are a product marketing content specialist. Create EXACTLY the marketing content the user asks for.\n"
+            "- Ground copy in our product context from the Context section and conversation history below\n"
+            "- If emailing about product availability, include ALL specs from Context: part number, description, "
+            "manufacturer, price, stock quantity, MOQ, lead time, package, voltage — never generic 'reply for details'\n"
             "- If they ask for a LinkedIn post: write ONLY a LinkedIn post\n"
-            "- If they ask for an email: write ONLY an email\n"
+            "- If they ask for an email: write ONLY an email with **To:** and **Subject:** lines\n"
             "- Do NOT create multiple content types\n"
             "- No placeholder text like [Your Name]\n"
             "- Sign off as 'The Product Marketing Team'\n"
             f"{pricing_safety}\n"
             f"{recipient_hint}\n"
             f"Context:\n{ctx}\n\n"
-            f"Request: {state['question']}\nContent:"
+            f"Request:\n{state['question']}\nContent:"
         )
 
     resp = llm.invoke(
@@ -220,29 +267,25 @@ def route_send(state: AgentState, config: RunnableConfig | None = None) -> str:
 
 def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> dict:
     content = state["answer"]
-    emails_found = _extract_emails(content)
+    drafts = _parse_email_drafts(content)
 
-    if not emails_found:
-        emails_found = _extract_emails(state["question"])
-
-    if not emails_found:
-        return {
-            "answer": state["answer"] + "\n\n---\n⚠️ *No email addresses found in drafts to send.*",
-            "steps": ["Outreach Send → ❌ no emails found in generated content"],
-        }
-
-    subject_match = re.search(r'\*{0,2}Subject:?\*{0,2}\s*(.+)', content)
-    subject = subject_match.group(1).strip() if subject_match else "A personalized product introduction"
-
-    body = re.sub(r'\*{0,2}To:?\*{0,2}.*\n?', '', content)
-    body = re.sub(r'\*{0,2}Subject:?\*{0,2}.*\n?', '', body)
-    body = body.strip().strip('-').strip()
-
-    body = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', body)
-    body_html = ''.join(f'<p style="margin: 0 0 12px 0;">{p.strip()}</p>'
-                        for p in body.split('\n\n') if p.strip())
-    if not body_html:
-        body_html = body.replace('\n', '<br>')
+    if not drafts:
+        emails_found = _extract_emails(content) or _extract_emails(state["question"])
+        if not emails_found:
+            return {
+                "answer": state["answer"] + "\n\n---\n⚠️ *No email addresses found in drafts to send.*",
+                "steps": ["Outreach Send → ❌ no emails found in generated content"],
+            }
+        subject_match = re.search(r"\*{0,2}Subject:?\*{0,2}\s*(.+)", content, re.IGNORECASE)
+        subject = (
+            subject_match.group(1).strip()
+            if subject_match
+            else "A personalized product introduction"
+        )
+        body = re.sub(r"^\*{0,2}To:?\*{0,2}.*\n?", "", content, flags=re.MULTILINE)
+        body = re.sub(r"^\*{0,2}Subject:?\*{0,2}.*\n?", "", body, flags=re.MULTILINE)
+        body = body.strip().strip("-").strip()
+        drafts = [{"to_email": email, "subject": subject, "body": body} for email in emails_found]
 
     sent = []
     failed = []
@@ -252,7 +295,8 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
         metadata={"node": "outreach_send"},
         tags=["agent:outreach", "tool:send_email"],
     )
-    for to in emails_found:
+    for draft in drafts:
+        body_html = _body_to_html(draft["body"])
         html = f"""
         <div style="font-family: -apple-system, Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1a1a1a; line-height: 1.6;">
             {body_html}
@@ -261,11 +305,18 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
         </div>
         """
 
-        result = send_email.invoke({"to_email": to, "subject": subject, "html_body": html}, config=invoke_config)
+        result = send_email.invoke(
+            {
+                "to_email": draft["to_email"],
+                "subject": draft["subject"],
+                "html_body": html,
+            },
+            config=invoke_config,
+        )
         if "SENT" in result:
-            sent.append(to)
+            sent.append(draft["to_email"])
         else:
-            failed.append(f"{to} ({result})")
+            failed.append(f"{draft['to_email']} ({result})")
 
     summary = ""
     if sent:
