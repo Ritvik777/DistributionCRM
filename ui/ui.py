@@ -356,6 +356,9 @@ def render_sidebar(doc_count: int) -> None:
             st.rerun()
         st.divider()
         _render_stats(doc_count)
+        if st.session_state.get("pending_drafts") and _draft_has_recipient(st.session_state.pending_drafts):
+            st.warning("📧 Email draft ready — confirm to send via Brevo.")
+            _render_confirm_send_button("sidebar")
         st.divider()
         _render_doc_upload()
         _render_kb_manage()
@@ -365,25 +368,44 @@ def render_sidebar(doc_count: int) -> None:
         st.caption("LangGraph · Qdrant · Anthropic · Brevo")
 
 
+def _execute_confirm_send() -> None:
+    draft = st.session_state.get("pending_drafts", "")
+    if not draft or not _draft_has_recipient(draft):
+        return
+    try:
+        with st.spinner("Sending via Brevo..."):
+            result = confirm_send_email(draft, chat_history=_get_chat_history())
+        st.session_state.pending_drafts = ""
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": result.get("answer", ""),
+            "agent": "outreach",
+            "trace": result.get("steps", []),
+        })
+        st.rerun()
+    except Exception as error:
+        st.error(f"Send failed: {error}")
+
+
+def _render_confirm_send_button(key_suffix: str) -> None:
+    draft = st.session_state.get("pending_drafts", "")
+    if not draft or not _draft_has_recipient(draft):
+        return
+    if st.button(
+        "✅ Confirm & Send Email",
+        type="primary",
+        key=f"confirm_send_email_{key_suffix}",
+        use_container_width=True,
+    ):
+        _execute_confirm_send()
+
+
 def render_pending_send() -> None:
     draft = st.session_state.get("pending_drafts", "")
     if not draft or not _draft_has_recipient(draft):
         return
     st.info("📧 **Outreach draft ready.** Review the email above, then confirm to send via Brevo.")
-    if st.button("✅ Confirm & Send Email", type="primary", key="confirm_send_email"):
-        try:
-            with st.spinner("Sending via Brevo..."):
-                result = confirm_send_email(draft, chat_history=_get_chat_history())
-            st.session_state.pending_drafts = ""
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": result.get("answer", ""),
-                "agent": "outreach",
-                "trace": result.get("steps", []),
-            })
-            st.rerun()
-        except Exception as error:
-            st.error(f"Send failed: {error}")
+    _render_confirm_send_button("main")
 
 
 def render_chat_history() -> None:
@@ -468,7 +490,10 @@ def handle_new_prompt(prompt: str) -> None:
         _show_galileo_debug_links_once()
         st.markdown(result.get("answer", ""))
         if result.get("send_intent") and not result.get("send_confirmed"):
-            st.caption("💡 Send intent detected — use **Confirm & Send Email** below when ready.")
+            st.caption("💡 When you're happy with the draft, click **Confirm & Send Email** below.")
         _render_trace(result.get("steps", []))
+        if st.session_state.get("pending_drafts") and _draft_has_recipient(st.session_state.pending_drafts):
+            st.markdown("---")
+            _render_confirm_send_button("inline")
 
     _push_assistant_message(result)

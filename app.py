@@ -28,11 +28,12 @@ def main() -> None:
         st.info("👈 Add product docs to the knowledge base first — expand **Add Knowledge Base Docs** in the sidebar.")
 
     render_chat_history()
-    render_pending_send()
 
     new_prompt = st.chat_input("Ask about your products, or request marketing content...")
     if new_prompt:
         handle_new_prompt(new_prompt)
+
+    render_pending_send()
 
 
 main()
