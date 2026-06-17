@@ -277,14 +277,14 @@ def _render_how_it_works() -> None:
 - Researches product context and audience
 - Finds leads via Apollo (job title, industry)
 - Creates LinkedIn posts, emails, marketing copy
-- Can send emails via SendGrid when you ask to send
+- Can send emails via Brevo when you ask to send
 - Uses: `search_knowledge_base`, `web_search`, `apollo_search`, `send_email`
 
 **All 4 tools:**
 - `search_knowledge_base` (Qdrant) — product docs from your knowledge base
 - `web_search` (DuckDuckGo) — live web for market/competitor info
 - `apollo_search` (Apollo.io) — find leads by job title, location, industry
-- `send_email` (SendGrid) — deliver personalized emails
+- `send_email` (Brevo) — deliver personalized emails
 """)
 
 

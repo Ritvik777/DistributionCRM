@@ -471,8 +471,8 @@
           <tr><td><span class="mono">agents/state.py</span></td><td>Shared `AgentState` schema and `steps` merge behavior across nodes.</td></tr>
           <tr><td><span class="mono">agents/router_agent/nodes.py</span></td><td>Intent classification (`gtm` vs `outreach`) using LLM.</td></tr>
           <tr><td><span class="mono">agents/gtm_agent/nodes.py</span></td><td>GTM branch: retrieve context, pricing gate, email gate, final GTM generation.</td></tr>
-          <tr><td><span class="mono">agents/outreach_agent/nodes.py</span></td><td>Outreach branch: research, draft generation, send gate, optional SendGrid send.</td></tr>
-          <tr><td><span class="mono">agents/tools.py</span></td><td>All 4 tools: <span class="mono">search_knowledge_base</span> (Qdrant), <span class="mono">web_search</span> (DuckDuckGo), <span class="mono">apollo_search</span> (Apollo), <span class="mono">send_email</span> (SendGrid) + tool-calling loop.</td></tr>
+          <tr><td><span class="mono">agents/outreach_agent/nodes.py</span></td><td>Outreach branch: research, draft generation, send gate, optional Brevo send.</td></tr>
+          <tr><td><span class="mono">agents/tools.py</span></td><td>All 4 tools: <span class="mono">search_knowledge_base</span> (Qdrant), <span class="mono">web_search</span> (DuckDuckGo), <span class="mono">apollo_search</span> (Apollo), <span class="mono">send_email</span> (Brevo) + tool-calling loop.</td></tr>
           <tr><td><span class="mono">vector_db/database.py</span></td><td>Qdrant client setup, collection validation, add/search/count methods.</td></tr>
           <tr><td><span class="mono">vector_db/chunker.py</span></td><td>Text chunking and PDF extraction for indexing documents.</td></tr>
           <tr><td><span class="mono">vector_db/embeddings.py</span></td><td>Gemini embedding model factory used by vector store operations.</td></tr>
@@ -692,7 +692,7 @@ def get_llm(temperature=0.7):
           <tr><td>Embeddings</td><td><span class="mono">Google Gemini Embeddings</span></td><td>Converts knowledge docs into vectors for Qdrant retrieval.</td></tr>
           <tr><td>Vector Store</td><td><span class="mono">Qdrant Cloud</span></td><td>Stores chunks and returns similarity-scored context for tool calls.</td></tr>
           <tr><td>Web Research</td><td><span class="mono">DuckDuckGo</span></td><td><code>web_search</code> — live web for market/competitor context.</td></tr>
-          <tr><td>Leads + Email</td><td><span class="mono">Apollo</span> + <span class="mono">SendGrid</span></td><td><code>apollo_search</code> (leads by job/industry), <code>send_email</code> (outreach send path).</td></tr>
+          <tr><td>Leads + Email</td><td><span class="mono">Apollo</span> + <span class="mono">Brevo</span></td><td><code>apollo_search</code> (leads by job/industry), <code>send_email</code> (outreach send path).</td></tr>
           <tr><td>Observability</td><td><span class="mono">Galileo</span></td><td>Spans, traces, sessions, and experiment logging.</td></tr>
           <tr><td>UI</td><td><span class="mono">Streamlit</span></td><td>Chat UX, graph preview (PNG with ASCII/Mermaid fallback), upload flow, and step trace display.</td></tr>
         </tbody>
@@ -799,7 +799,7 @@ def get_llm(temperature=0.7):
             <li><span class="mono">outreach_research</span> selects Apollo+KB or KB+web tool mix.</li>
             <li><span class="mono">outreach_generate</span> drafts post/email content.</li>
             <li><span class="mono">send_gate</span> resolves "send now" vs "review only".</li>
-            <li><span class="mono">outreach_send</span> performs SendGrid delivery if approved.</li>
+            <li><span class="mono">outreach_send</span> performs Brevo delivery if approved.</li>
           </ol>
         </article>
       </div>
@@ -813,7 +813,7 @@ def get_llm(temperature=0.7):
           <tr><td><span class="mono">search_knowledge_base</span></td><td>Qdrant</td><td>GTM, Outreach</td><td>Product docs from your indexed knowledge base</td></tr>
           <tr><td><span class="mono">web_search</span></td><td>DuckDuckGo</td><td>GTM, Outreach</td><td>Live web for market/competitor/industry info</td></tr>
           <tr><td><span class="mono">apollo_search</span></td><td>Apollo.io</td><td>Outreach</td><td>Find leads by job title, location, industry</td></tr>
-          <tr><td><span class="mono">send_email</span></td><td>SendGrid</td><td>Outreach</td><td>Deliver personalized emails when user asks to send</td></tr>
+          <tr><td><span class="mono">send_email</span></td><td>Brevo</td><td>Outreach</td><td>Deliver personalized emails when user asks to send</td></tr>
         </tbody>
       </table>
     </section>
@@ -864,7 +864,7 @@ def get_llm(temperature=0.7):
           <h3>Example C - Send request</h3>
           <p><strong>User:</strong> "Send this to ritvik@dauji.ai now."</p>
           <p><strong>Path:</strong> <span class="mono">classify -> outreach_research -> outreach_generate -> send_gate(send) -> outreach_send</span></p>
-          <p><strong>Outcome:</strong> sends via SendGrid and returns send status summary.</p>
+          <p><strong>Outcome:</strong> sends via Brevo and returns send status summary.</p>
         </article>
       </div>
     </section>
@@ -881,7 +881,7 @@ def get_llm(temperature=0.7):
           <tr><td>LangGraph</td><td>State graph orchestration and conditional routing</td><td><a href="https://langchain-ai.github.io/langgraph/">LangGraph docs</a></td></tr>
           <tr><td>Streamlit</td><td>Application UI and interactive chat view</td><td><a href="https://docs.streamlit.io/">docs.streamlit.io</a></td></tr>
           <tr><td>Apollo</td><td>Lead search and enrichment in outreach flow</td><td><a href="https://www.apollo.io/">apollo.io</a></td></tr>
-          <tr><td>SendGrid</td><td>Email delivery for approved send actions</td><td><a href="https://sendgrid.com/">sendgrid.com</a></td></tr>
+          <tr><td>Brevo</td><td>Email delivery for approved send actions</td><td><a href="https://www.brevo.com/">brevo.com</a></td></tr>
         </tbody>
       </table>
     </section>

@@ -17,7 +17,7 @@ Runtime flow is: classify request -> run branch nodes -> apply gate logic -> pro
 | LangGraph Docs | [LangGraph documentation](https://langchain-ai.github.io/langgraph/) |
 | Streamlit Docs | [docs.streamlit.io](https://docs.streamlit.io/) |
 | Apollo API | [apollo.io](https://www.apollo.io/) |
-| SendGrid | [sendgrid.com](https://sendgrid.com/) |
+| Brevo | [brevo.com](https://www.brevo.com/) |
 | DuckDuckGo Search package | [duckduckgo-search on PyPI](https://pypi.org/project/duckduckgo-search/) |
 
 ## Galileo SDK placement in code (quick map)
@@ -52,7 +52,7 @@ The app has:
 
 - A **Supervisor Routing Agent** (`gtm` vs `outreach`)
 - A **GTM branch** (retrieval, pricing gate, email collection, answer generation)
-- An **Outreach branch** (research, content generation, send gate, optional SendGrid delivery)
+- An **Outreach branch** (research, content generation, send gate, optional Brevo delivery)
 
 The eval runner executes this same production path by calling `agents.ask(...)`, so eval behavior matches runtime behavior.
 
@@ -107,7 +107,7 @@ Expected tool coverage (all 4 tools):
 - `search_knowledge_base` (Qdrant)
 - `web_search` (DuckDuckGo)
 - `apollo_search` (Apollo.io)
-- `send_email` (SendGrid)
+- `send_email` (Brevo)
 
 At the end, it prints PASS/fail coverage summary.
 
@@ -138,8 +138,9 @@ cp .env.example .env
   - `QDRANT_API_KEY`
 - Outreach optional features:
   - `APOLLO_API_KEY` (lead search)
-  - `SENDGRID_API_KEY`
-  - `SENDGRID_FROM_EMAIL`
+  - `BREVO_API_KEY`
+  - `BREVO_FROM_EMAIL`
+  - `BREVO_FROM_NAME` (optional)
 - Galileo observability/evals:
   - `GALILEO_API_KEY`
   - `GALILEO_PROJECT`

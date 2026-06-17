@@ -121,27 +121,37 @@ def apollo_search(job_titles: str, location: str = "", industry: str = "", limit
 @tool
 @log_span(span_type="tool", name="send_email")
 def send_email(to_email: str, subject: str, html_body: str) -> str:
-    """Send a personalized marketing email via SendGrid. Provide recipient email, subject line, and HTML body."""
+    """Send a personalized marketing email via Brevo. Provide recipient email, subject line, and HTML body."""
     import os
+
+    import requests
+
+    api_key = os.getenv("BREVO_API_KEY")
+    if not api_key or api_key == "your-brevo-api-key-here":
+        return "ERROR: BREVO_API_KEY not configured in .env"
+
+    from_email = os.getenv("BREVO_FROM_EMAIL")
+    if not from_email or from_email == "you@yourcompany.com":
+        return "ERROR: BREVO_FROM_EMAIL not configured in .env"
+
+    from_name = os.getenv("BREVO_FROM_NAME", "Galileo Marketing AI")
+    payload = {
+        "sender": {"name": from_name, "email": from_email},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_body,
+    }
+
     try:
-        from sendgrid import SendGridAPIClient
-        from sendgrid.helpers.mail import Mail
-    except ImportError:
-        return "ERROR: sendgrid not installed. Run: pip install sendgrid"
-
-    api_key = os.getenv("SENDGRID_API_KEY")
-    if not api_key or api_key == "your-sendgrid-api-key-here":
-        return "ERROR: SENDGRID_API_KEY not configured in .env"
-
-    from_email = os.getenv("SENDGRID_FROM_EMAIL", "noreply@example.com")
-    message = Mail(from_email=from_email, to_emails=to_email, subject=subject, html_content=html_body)
-
-    try:
-        sg = SendGridAPIClient(api_key)
-        resp = sg.send(message)
+        resp = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={"api-key": api_key, "Content-Type": "application/json", "accept": "application/json"},
+            json=payload,
+            timeout=15,
+        )
         if resp.status_code in (200, 201, 202):
             return f"SENT to {to_email} (status {resp.status_code})"
-        return f"FAILED (status {resp.status_code})"
+        return f"FAILED (status {resp.status_code}): {resp.text[:200]}"
     except Exception as e:
         return f"ERROR: {e}"
 

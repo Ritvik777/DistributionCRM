@@ -11,5 +11,4 @@ openpyxl
 langchain-text-splitters
 duckduckgo-search
 requests
-sendgrid
 galileo

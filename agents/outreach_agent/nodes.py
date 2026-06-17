@@ -301,7 +301,7 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
 # [outreach_send]
 #   - Extract emails from draft/question
 #   - Parse subject and body
-#   - Send each via send_email (SendGrid)
+#   - Send each via send_email (Brevo)
 #   - Append summary to answer
 #      ↓
 # END

@@ -42,7 +42,7 @@ START -> classify
 - **Outreach Agent** (`agents/outreach_agent/nodes.py`)
   - Researches context (and uses Apollo for lead-intent prompts)
   - Generates marketing content (email/post)
-  - Send gate determines review-only vs actual send via SendGrid
+  - Send gate determines review-only vs actual send via Brevo
 
 ### Shared state
 
@@ -68,7 +68,7 @@ agents/graph.py                 # LangGraph node wiring
 agents/router_agent/nodes.py    # classify + route
 agents/gtm_agent/nodes.py       # GTM branch nodes
 agents/outreach_agent/nodes.py  # Outreach branch nodes
-agents/tools.py                 # KB/web/Apollo/SendGrid tools + tool loop
+agents/tools.py                 # KB/web/Apollo/Brevo tools + tool loop
 vector_db/database.py           # Qdrant store/search and collection checks
 vector_db/chunker.py            # text/pdf chunking
 vector_db/embeddings.py         # Gemini embeddings model
@@ -112,7 +112,7 @@ evals/run_galileo_evals.py      # baseline evaluation suite
 | Vector DB | Qdrant Cloud |
 | Web Search | DuckDuckGo |
 | Leads | Apollo API |
-| Email | SendGrid |
+| Email | Brevo |
 | UI | Streamlit |
 | Observability / Evals | Galileo |
 
@@ -163,7 +163,7 @@ Required Galileo env vars are in `.env.example`:
 | LangGraph Docs | [LangGraph documentation](https://langchain-ai.github.io/langgraph/) |
 | Streamlit Docs | [docs.streamlit.io](https://docs.streamlit.io/) |
 | Apollo API | [apollo.io](https://www.apollo.io/) |
-| SendGrid | [sendgrid.com](https://sendgrid.com/) |
+| Brevo | [brevo.com](https://www.brevo.com/) |
 | DuckDuckGo Search package | [duckduckgo-search on PyPI](https://pypi.org/project/duckduckgo-search/) |
 
 ## Setup and run
@@ -191,8 +191,9 @@ Fill `.env` with your values:
   - `QDRANT_API_KEY`
 - Optional outreach features:
   - `APOLLO_API_KEY`
-  - `SENDGRID_API_KEY`
-  - `SENDGRID_FROM_EMAIL`
+  - `BREVO_API_KEY`
+  - `BREVO_FROM_EMAIL`
+  - `BREVO_FROM_NAME` (optional)
 - Observability/evals:
   - `GALILEO_API_KEY`
   - `GALILEO_PROJECT`
