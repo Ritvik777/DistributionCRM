@@ -5,6 +5,7 @@ from ui.ui import (
     render_sidebar,
     initialize_session_state,
     render_chat_history,
+    render_pending_send,
     handle_new_prompt,
 )
 
@@ -27,6 +28,7 @@ def main() -> None:
         st.info("👈 Add product docs to the knowledge base first — expand **Add Knowledge Base Docs** in the sidebar.")
 
     render_chat_history()
+    render_pending_send()
 
     new_prompt = st.chat_input("Ask about your products, or request marketing content...")
     if new_prompt:

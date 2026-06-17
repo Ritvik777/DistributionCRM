@@ -4,55 +4,67 @@ import re
 from langchain_core.runnables import RunnableConfig
 
 from agents.state import AgentState
+from agents.chat import build_turn_context
+from agents.schemas import LeadsGateDecision, SendIntentDecision
+from agents.structured import invoke_structured
 from llm import get_llm
 from agents.tools import search_knowledge_base, web_search, apollo_search, send_email, call_tools
 from observability import merge_node_config
 
 logger = logging.getLogger(__name__)
 
-
 EMAIL_PATTERN = r"[\w.+-]+@[\w-]+\.[\w.]+"
 
 
-def _llm_leads_decision(question: str, config: RunnableConfig | None = None) -> str | None:
-    """LLM decides if user wants to find leads/prospects. Returns 'leads' or 'content', or None on failure."""
-    try:
-        llm = get_llm(temperature=0)
-        resp = llm.invoke(
+def _leads_gate_decision(state: AgentState, config: RunnableConfig | None = None) -> tuple[str, str]:
+    turn = build_turn_context(state)
+    invoke_config = merge_node_config(
+        config,
+        metadata={"node": "leads_gate_decision", "agent_type": "outreach"},
+        tags=["agent:outreach", "gate:leads"],
+    )
+    decision = invoke_structured(
+        LeadsGateDecision,
+        get_llm(temperature=0),
+        (
             "You are a gate in a Product Marketing outreach assistant.\n"
-            "Decide whether the user wants to FIND LEADS/PROSPECTS for product outreach.\n"
-            "Return exactly one word: leads or content.\n\n"
-            "Rules:\n"
-            "- leads: finding prospects, research leads, find companies, find people to contact, "
-            "who can I reach out to, prospect list\n"
-            "- content: writing emails, LinkedIn posts, marketing copy, drafting outreach "
-            "(even if targeting a specific audience)\n"
-            "- If uncertain, return content.\n\n"
-            f"User message: {question}\n"
-            "Decision:",
-            config=merge_node_config(
-                config,
-                metadata={"node": "leads_gate_decision", "agent_type": "outreach"},
-                tags=["agent:outreach", "gate:leads"],
-            ) or None,
-        )
-        decision = str(resp.content).strip().lower()
-        if "leads" in decision:
-            return "leads"
-        if "content" in decision:
-            return "content"
-        logger.warning(
-            "Leads gate: LLM returned unparseable decision, defaulting to content. "
-            "Raw response: %r",
-            resp.content,
-        )
-        return None
-    except Exception as exc:
-        logger.exception(
-            "Leads gate: LLM call failed, defaulting to content path. Error: %s",
-            exc,
-        )
-        return None
+            "Choose leads if the user wants to FIND prospects/people/companies to contact.\n"
+            "Choose content if the user wants to write emails, posts, or marketing copy.\n"
+            "If uncertain, choose content.\n\n"
+            f"{turn}"
+        ),
+        invoke_config,
+    )
+    if decision is None:
+        return "content", "fallback"
+    return decision.path, "structured"
+
+
+def _send_intent_decision(state: AgentState, config: RunnableConfig | None = None) -> tuple[str, str]:
+    turn = build_turn_context(state)
+    draft = state.get("answer", "")
+    invoke_config = merge_node_config(
+        config,
+        metadata={"node": "send_gate_decision", "agent_type": "outreach"},
+        tags=["agent:outreach", "gate:send"],
+    )
+    decision = invoke_structured(
+        SendIntentDecision,
+        get_llm(temperature=0),
+        (
+            "You are a gate in a Product Marketing outreach assistant.\n"
+            "Choose send ONLY if the user explicitly wants immediate delivery of an existing draft "
+            "(e.g. 'send it', 'send now', 'go ahead and send').\n"
+            "Choose review for compose/draft/can-you-email requests or follow-up edits.\n"
+            "If uncertain, choose review.\n\n"
+            f"Draft preview:\n{draft[:400]}\n\n"
+            f"{turn}"
+        ),
+        invoke_config,
+    )
+    if decision is None:
+        return "review", "fallback"
+    return decision.intent, "structured"
 
 
 def _extract_emails(text: str) -> list[str]:
@@ -95,66 +107,19 @@ def _parse_email_drafts(content: str) -> list[dict[str, str]]:
             drafts.append({"to_email": emails[0], "subject": subject, "body": body})
     return drafts
 
-
-def _llm_send_decision(question: str, draft: str, config: RunnableConfig | None = None) -> str | None:
-    """LLM decides if user wants to send email now. Returns 'send' or 'review', or None on failure."""
-    try:
-        llm = get_llm(temperature=0.7)
-        resp = llm.invoke(
-            "You are a gate in a Product Marketing outreach assistant.\n"
-            "Decide whether the user is explicitly asking to SEND a marketing email now.\n"
-            "Return exactly one word: send or review.\n\n"
-            "Rules:\n"
-            "- send: ONLY when user explicitly wants immediate delivery of an existing draft "
-            "(e.g. 'send it', 'send now', 'go ahead and send', 'yes send it')\n"
-            "- review: user asks to write/draft/compose/can you email someone, first-time email requests, "
-            "or follow-ups to improve a draft — show draft only, do NOT send yet\n"
-            "- 'can you email X about Y' = review (compose first)\n"
-            "- If uncertain, return review.\n\n"
-            f"User message: {question}\n"
-            f"Current draft preview: {draft[:400]}\n"
-            "Decision:",
-            config=merge_node_config(
-                config,
-                metadata={"node": "send_gate_decision", "agent_type": "outreach"},
-                tags=["agent:outreach", "gate:send"],
-            ) or None,
-        )
-        decision = str(resp.content).strip().lower()
-        if "send" in decision:
-            return "send"
-        if "review" in decision:
-            return "review"
-        logger.warning(
-            "Send gate: LLM returned unparseable decision, defaulting to review (no send). "
-            "Raw response: %r",
-            resp.content,
-        )
-        return None
-    except Exception as exc:
-        logger.exception(
-            "Send gate: LLM call failed, defaulting to review (no send). Error: %s",
-            exc,
-        )
-        return None
-
-
 def outreach_research(state: AgentState, config: RunnableConfig | None = None) -> dict:
-    q = state["question"]
-
-    llm_decision = _llm_leads_decision(q, config)
-    wants_leads = llm_decision == "leads" if llm_decision is not None else False
-    source = "llm" if llm_decision is not None else "default(fallback)"
+    turn = build_turn_context(state)
+    path, source = _leads_gate_decision(state, config)
+    wants_leads = path == "leads"
 
     if wants_leads:
         ctx, log = call_tools(
-            q,
+            turn,
             tools=[apollo_search, search_knowledge_base],
             config=config,
             system_prompt=(
                 "You are a product marketing research assistant. The user wants to find leads/prospects for outreach. You MUST:\n"
-                "1. Call apollo_search with relevant job titles (e.g. 'VP Engineering, CTO, Head of AI') "
-                "and optionally an industry (e.g. 'computer software', 'artificial intelligence')\n"
+                "1. Call apollo_search with relevant job titles\n"
                 "2. Call search_knowledge_base to get our product info for personalization\n\n"
                 "ALWAYS call apollo_search. Do NOT skip it."
             ),
@@ -162,14 +127,13 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
         path_label = "leads (apollo)"
     else:
         ctx, log = call_tools(
-            q,
+            turn,
             tools=[search_knowledge_base, web_search],
             config=config,
             system_prompt=(
                 "You are a product marketing research assistant preparing outreach content.\n"
                 "Use search_knowledge_base for product specs, SKU/part numbers, stock, price, MOQ, and lead time. "
-                "If the user emails someone about a product (or conversation history mentions one), search the KB "
-                "for that product name or SKU — do NOT skip search_knowledge_base.\n"
+                "If conversation history or the current message mentions a product, search the KB for it.\n"
                 "Use web_search only for target company/industry info to personalize."
             ),
         )
@@ -184,6 +148,8 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
     ctx = state.get("context", "")
     has_leads = "leads" in ctx.lower() and "Email:" in ctx
 
+    turn = build_turn_context(state)
+
     if has_leads:
         prompt = (
             "You are a product marketing outreach specialist. "
@@ -194,7 +160,6 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             "- Use their actual name, title, company, and industry\n"
             "- Connect their likely pain points to our product benefits\n"
             "- Keep each email 2-3 short paragraphs\n"
-            "- Use HTML formatting (<p>, <b>)\n"
             "- Sign off as 'The Product Marketing Team'\n"
             "- NO placeholder text like [Your Name] — use real data only\n\n"
             "Format EACH email as:\n"
@@ -203,10 +168,10 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             "<email body>\n"
             "---\n\n"
             f"Leads + product info:\n{ctx}\n\n"
-            f"Request: {state['question']}"
+            f"{turn}\nContent:"
         )
     else:
-        recipient_emails = _extract_emails(state["question"])
+        recipient_emails = _extract_emails(build_turn_context(state))
         recipient_hint = ""
         if recipient_emails:
             recipient_hint = (
@@ -235,7 +200,7 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             f"{pricing_safety}\n"
             f"{recipient_hint}\n"
             f"Context:\n{ctx}\n\n"
-            f"Request:\n{state['question']}\nContent:"
+            f"{turn}\nContent:"
         )
 
     resp = llm.invoke(
@@ -254,15 +219,18 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
 
 
 def send_gate(state: AgentState, config: RunnableConfig | None = None) -> dict:
-    llm_decision = _llm_send_decision(state["question"], state.get("answer", ""), config)
-    should_send = llm_decision == "send" if llm_decision is not None else False
-    source = "llm" if llm_decision is not None else "default(fallback)"
-    label = "📤 user wants to SEND" if should_send else "👀 review only (no send)"
-    return {"send_requested": should_send, "steps": [f"Send Gate({source}) → {label}"]}
+    intent, source = _send_intent_decision(state, config)
+    wants_send = intent == "send"
+    label = "📤 send intent — confirm in UI" if wants_send else "👀 review only"
+    return {
+        "send_intent": wants_send,
+        "send_requested": False,
+        "steps": [f"Send Gate({source}) → {label}"],
+    }
 
 
 def route_send(state: AgentState, config: RunnableConfig | None = None) -> str:
-    return "send" if state.get("send_requested") else "review"
+    return "send" if state.get("send_confirmed") else "review"
 
 
 def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> dict:

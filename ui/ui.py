@@ -1,10 +1,21 @@
+import re
 import streamlit as st
 from datetime import datetime, UTC
 import os
 from uuid import uuid4
-from services.vector_db_service import add_text_documents, add_pdf_document, add_excel_document, add_csv_document
-from services.agent_service import ask_agent, load_graph_image, load_graph_ascii
+from services.vector_db_service import (
+    add_text_documents,
+    add_pdf_document,
+    add_excel_document,
+    add_csv_document,
+    get_kb_sources,
+    remove_kb_source,
+    reindex_kb_source,
+)
+from services.agent_service import ask_agent, confirm_send_email, load_graph_image, load_graph_ascii
 from observability import start_chat_session, get_console_links
+
+EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 
 
 STYLE_BLOCK = """
@@ -119,6 +130,20 @@ BADGES = {
 }
 SEND_WORDS = ["send it", "send now", "go ahead and send", "yes send", "please send"]
 MAX_HISTORY_MESSAGES = 10
+
+
+def _draft_has_recipient(text: str) -> bool:
+    return bool(EMAIL_PATTERN.search(text or ""))
+
+
+def _get_chat_history() -> list[dict]:
+    history: list[dict] = []
+    for msg in st.session_state.messages[:-1][-MAX_HISTORY_MESSAGES:]:
+        entry: dict = {"role": msg["role"], "content": msg.get("content", "")}
+        if msg.get("agent"):
+            entry["agent"] = msg["agent"]
+        history.append(entry)
+    return history
 
 
 def apply_styles() -> None:
@@ -242,6 +267,39 @@ def _render_doc_upload() -> None:
                 st.error(f"Could not add quotation: {error}")
 
 
+def _render_kb_manage() -> None:
+    with st.expander("📚 Manage Knowledge Base", expanded=False):
+        try:
+            sources = get_kb_sources()
+        except Exception as error:
+            st.error(f"Could not load sources: {error}")
+            return
+        if not sources:
+            st.caption("No indexed sources yet. Upload docs above.")
+            return
+        for index, item in enumerate(sources):
+            source = item["source"]
+            chunks = item["chunks"]
+            col1, col2, col3 = st.columns([3, 1, 1])
+            col1.caption(f"**{source}** — {chunks} chunks")
+            if col2.button("Re-index", key=f"reindex_{index}", use_container_width=True):
+                try:
+                    with st.spinner(f"Re-indexing {source}..."):
+                        count = reindex_kb_source(source)
+                    st.success(f"Re-indexed {count} chunks for {source}")
+                    st.rerun()
+                except Exception as error:
+                    st.error(str(error))
+            if col3.button("Delete", key=f"delete_{index}", use_container_width=True):
+                try:
+                    with st.spinner(f"Deleting {source}..."):
+                        removed = remove_kb_source(source)
+                    st.success(f"Removed {removed} chunks from {source}")
+                    st.rerun()
+                except Exception as error:
+                    st.error(str(error))
+
+
 def _render_graph() -> None:
     with st.expander("🗺️ Agent Graph", expanded=False):
         img_bytes = load_graph_image()
@@ -278,7 +336,7 @@ def _render_how_it_works() -> None:
 - Researches product context and audience
 - Finds leads via Apollo (job title, industry)
 - Creates LinkedIn posts, emails, marketing copy
-- Can send emails via Brevo when you ask to send
+- Can send emails via Brevo after you **confirm** in the UI (review draft first)
 - Uses: `search_knowledge_base`, `web_search`, `apollo_search`, `send_email`
 
 **All 4 tools:**
@@ -300,10 +358,32 @@ def render_sidebar(doc_count: int) -> None:
         _render_stats(doc_count)
         st.divider()
         _render_doc_upload()
+        _render_kb_manage()
         _render_graph()
         _render_how_it_works()
         st.divider()
         st.caption("LangGraph · Qdrant · Anthropic · Brevo")
+
+
+def render_pending_send() -> None:
+    draft = st.session_state.get("pending_drafts", "")
+    if not draft or not _draft_has_recipient(draft):
+        return
+    st.info("📧 **Outreach draft ready.** Review the email above, then confirm to send via Brevo.")
+    if st.button("✅ Confirm & Send Email", type="primary", key="confirm_send_email"):
+        try:
+            with st.spinner("Sending via Brevo..."):
+                result = confirm_send_email(draft, chat_history=_get_chat_history())
+            st.session_state.pending_drafts = ""
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": result.get("answer", ""),
+                "agent": "outreach",
+                "trace": result.get("steps", []),
+            })
+            st.rerun()
+        except Exception as error:
+            st.error(f"Send failed: {error}")
 
 
 def render_chat_history() -> None:
@@ -317,42 +397,14 @@ def render_chat_history() -> None:
             _render_trace(message.get("trace", []))
 
 
-def _build_conversation_context() -> str:
-    """Prior chat turns (current user message is already the last entry in messages)."""
-    messages = st.session_state.messages
-    if len(messages) <= 1:
-        return ""
-    lines = []
-    for msg in messages[:-1][-MAX_HISTORY_MESSAGES:]:
-        role = "User" if msg["role"] == "user" else "Assistant"
-        content = (msg.get("content") or "").strip()
-        if len(content) > 2000:
-            content = content[:2000] + "..."
-        if content:
-            lines.append(f"{role}: {content}")
-    return "\n\n".join(lines)
-
-
-def _build_agent_question(prompt: str) -> str:
-    parts = []
-    history = _build_conversation_context()
-    if history:
-        parts.append(f"=== Conversation history ===\n{history}\n=== End history ===")
-
+def _question_for_agent(prompt: str) -> str:
     if st.session_state.awaiting_email:
-        parts.append(f"Current user message: {st.session_state.pricing_question} My email is {prompt}")
-        return "\n\n".join(parts)
-
+        return f"{st.session_state.pricing_question} My email is {prompt}"
     if st.session_state.pending_drafts and any(word in prompt.lower() for word in SEND_WORDS):
-        parts.append(
-            f"Current user message: {prompt}\n\n"
-            "Here are the drafted emails to send:\n"
-            f"{st.session_state.pending_drafts}"
+        return (
+            f"{prompt}\n\nUse this draft:\n{st.session_state.pending_drafts}"
         )
-        return "\n\n".join(parts)
-
-    parts.append(f"Current user message: {prompt}")
-    return "\n\n".join(parts)
+    return prompt
 
 
 def _update_session_from_result(prompt: str, result: dict) -> None:
@@ -364,10 +416,12 @@ def _update_session_from_result(prompt: str, result: dict) -> None:
         st.session_state.awaiting_email = False
         st.session_state.pricing_question = ""
 
-    if result.get("agent_type") == "outreach" and result.get("answer") and not result.get("send_requested"):
-        st.session_state.pending_drafts = result["answer"]
-    elif result.get("send_requested"):
+    if result.get("send_confirmed"):
         st.session_state.pending_drafts = ""
+    elif result.get("agent_type") == "outreach" and result.get("answer"):
+        answer = result["answer"]
+        if _draft_has_recipient(answer) and not answer.strip().startswith("✅ **Sent to:**"):
+            st.session_state.pending_drafts = answer
 
 
 def _push_assistant_message(result: dict) -> None:
@@ -392,10 +446,10 @@ def handle_new_prompt(prompt: str) -> None:
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        question_for_agent = _build_agent_question(prompt)
+        question = _question_for_agent(prompt)
         try:
             with st.spinner("🔄 Routing to the right agent..."):
-                result = ask_agent(question_for_agent)
+                result = ask_agent(question, chat_history=_get_chat_history())
         except Exception as error:
             error_text = str(error)
             st.error(f"Setup issue: {error_text}")
@@ -413,6 +467,8 @@ def handle_new_prompt(prompt: str) -> None:
         st.markdown(f'<span class="agent-badge {css_class}">{label}</span>', unsafe_allow_html=True)
         _show_galileo_debug_links_once()
         st.markdown(result.get("answer", ""))
+        if result.get("send_intent") and not result.get("send_confirmed"):
+            st.caption("💡 Send intent detected — use **Confirm & Send Email** below when ready.")
         _render_trace(result.get("steps", []))
 
     _push_assistant_message(result)

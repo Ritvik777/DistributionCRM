@@ -145,3 +145,68 @@ def get_document_count() -> int:
         return qdrant_client.get_collection(COLLECTION_NAME).points_count
     except Exception:
         return 0
+
+
+def _scroll_all_points(batch_size: int = 100):
+    setup_collection()
+    offset = None
+    while True:
+        records, offset = qdrant_client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=batch_size,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        yield from records
+        if offset is None:
+            break
+
+
+def list_sources() -> list[dict]:
+    counts: dict[str, int] = {}
+    try:
+        for record in _scroll_all_points():
+            meta = (record.payload or {}).get(META_KEY) or {}
+            source = meta.get("source") or "(unknown)"
+            counts[source] = counts.get(source, 0) + 1
+    except Exception as exc:
+        logger.warning("Failed to list KB sources: %s", exc)
+        return []
+    return [{"source": name, "chunks": count} for name, count in sorted(counts.items())]
+
+
+def _chunks_for_source(source: str) -> list[Chunk]:
+    chunks: list[Chunk] = []
+    for record in _scroll_all_points():
+        meta = (record.payload or {}).get(META_KEY) or {}
+        if meta.get("source") != source:
+            continue
+        text = (record.payload or {}).get(CONTENT_KEY, "")
+        if text:
+            chunks.append(Chunk(text, dict(meta)))
+    return chunks
+
+
+def delete_by_source(source: str) -> int:
+    try:
+        setup_collection()
+        ids = [
+            record.id
+            for record in _scroll_all_points()
+            if ((record.payload or {}).get(META_KEY) or {}).get("source") == source
+        ]
+        if not ids:
+            return 0
+        qdrant_client.delete(collection_name=COLLECTION_NAME, points_selector=models.PointIdsList(points=ids), wait=True)
+        return len(ids)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to delete source '{source}': {exc}") from exc
+
+
+def reindex_source(source: str) -> int:
+    chunks = _chunks_for_source(source)
+    if not chunks:
+        return 0
+    delete_by_source(source)
+    return add_chunks(chunks)

@@ -6,6 +6,7 @@ grandalf
 qdrant-client
 python-dotenv
 numpy<2
+pydantic
 pypdf
 pdfplumber
 openpyxl

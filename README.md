@@ -10,7 +10,7 @@ Each user request is first routed to the correct specialist branch, then process
 - Outreach branch creates content, finds leads, and can send emails
 - Full observability with Galileo tracing/session support (optional)
 
-Project explainer page (GitHub Pages): [Click here for Technical Understanding Blog](https://ritvik777.github.io/Galileo_Project/)
+Project explainer page (GitHub Pages): [Click here for Technical Understanding Blog](https://ritvik777.github.io/AI-Market/)
 
 ---
 
@@ -233,4 +233,4 @@ In GitHub settings:
 
 Then open:
 
-- `https://ritvik777.github.io/Galileo_Project/`
+- `https://ritvik777.github.io/AI-Market/`

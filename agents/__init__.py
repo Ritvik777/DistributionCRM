@@ -11,45 +11,107 @@ agents/ — The multi-agent system
 """
 
 from agents.graph import graph
+from agents.outreach_agent.nodes import outreach_send
 from observability import ensure_galileo_initialized, get_langchain_config, get_logger_instance, is_galileo_enabled
 
 
-def ask(question: str) -> dict:
-    # Make sure Galileo is ready before we run the graph.
-    ensure_galileo_initialized()
-    base_state = {
-        "question": question, "agent_type": "", "context": "", "answer": "",
-        "is_pricing": False, "user_email": "", "send_requested": False, "steps": [],
+def _base_state(
+    question: str,
+    chat_history: list[dict] | None = None,
+    **overrides,
+) -> dict:
+    state = {
+        "question": question,
+        "chat_history": chat_history or [],
+        "agent_type": "",
+        "context": "",
+        "answer": "",
+        "is_pricing": False,
+        "user_email": "",
+        "send_intent": False,
+        "send_requested": False,
+        "send_confirmed": False,
+        "steps": [],
     }
-    # If Galileo is not configured, run normally without tracing.
+    state.update(overrides)
+    return state
+
+
+def _invoke_with_tracing(state: dict, *, trace_name: str = "ask_agent") -> dict:
+    ensure_galileo_initialized()
+    question = state.get("question", "")
+
     if not is_galileo_enabled():
         config = get_langchain_config(metadata={"question": question})
-        return graph.invoke(base_state, config=config)
+        return graph.invoke(state, config=config)
 
     logger = get_logger_instance()
     if logger is None:
         config = get_langchain_config(metadata={"question": question})
-        return graph.invoke(base_state, config=config)
+        return graph.invoke(state, config=config)
 
-    # If a parent trace already exists, we join it instead of creating nested top traces.
     in_existing_trace = logger.current_parent() is not None
     if not in_existing_trace:
-        # Start one top-level trace for this user question.
-        logger.start_trace(input={"question": question}, name="ask_agent")
-    # Build config AFTER start_trace so GalileoCallback gets start_new_trace=False
-    # and nests graph spans under ask_agent instead of creating a sibling "Agent" trace.
+        logger.start_trace(input={"question": question}, name=trace_name)
     config = get_langchain_config(metadata={"question": question})
     try:
-        result = graph.invoke(base_state, config=config)
+        result = graph.invoke(state, config=config)
         if not in_existing_trace:
-            # Finish + flush so this trace appears in Galileo UI quickly.
             logger.conclude(result.get("answer", ""))
             logger.flush()
         return result
     except Exception:
         if not in_existing_trace:
             try:
-                # Flush partial trace on errors for debugging.
+                logger.flush()
+            except Exception:
+                pass
+        raise
+
+
+def ask(
+    question: str,
+    chat_history: list[dict] | None = None,
+    send_confirmed: bool = False,
+    pending_draft: str = "",
+) -> dict:
+    if send_confirmed and pending_draft.strip():
+        return confirm_send(pending_draft, chat_history=chat_history)
+
+    state = _base_state(question, chat_history)
+    return _invoke_with_tracing(state)
+
+
+def confirm_send(pending_draft: str, chat_history: list[dict] | None = None) -> dict:
+    """UI-confirmed Brevo send — bypasses draft generation, runs outreach_send only."""
+    ensure_galileo_initialized()
+    question = "User confirmed send via UI"
+    state = _base_state(
+        question,
+        chat_history,
+        agent_type="outreach",
+        answer=pending_draft,
+        send_confirmed=True,
+    )
+    config = get_langchain_config(metadata={"question": question, "send_confirmed": True})
+
+    logger = get_logger_instance()
+    in_existing_trace = logger is not None and logger.current_parent() is not None
+    if logger and not in_existing_trace:
+        logger.start_trace(input={"question": question, "action": "confirm_send"}, name="confirm_send")
+
+    try:
+        result = outreach_send(state, config=config)
+        result["agent_type"] = "outreach"
+        result["send_confirmed"] = True
+        result["send_requested"] = True
+        if logger and not in_existing_trace:
+            logger.conclude(result.get("answer", ""))
+            logger.flush()
+        return result
+    except Exception:
+        if logger and not in_existing_trace:
+            try:
                 logger.flush()
             except Exception:
                 pass
@@ -57,7 +119,6 @@ def ask(question: str) -> dict:
 
 
 def get_graph_image() -> bytes | None:
-    """Return PNG bytes, or None if rendering fails (e.g. Mermaid.INK API unreachable)."""
     try:
         return graph.get_graph().draw_mermaid_png()
     except Exception:
@@ -65,7 +126,6 @@ def get_graph_image() -> bytes | None:
 
 
 def get_graph_ascii() -> str:
-    """Return ASCII or Mermaid representation of the graph. Prefers ASCII when grandalf is installed."""
     try:
         return graph.get_graph().draw_ascii()
     except ImportError:
