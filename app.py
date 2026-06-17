@@ -10,25 +10,25 @@ from ui.ui import (
 
 
 def main() -> None:
-    st.set_page_config(page_title="Galileo AI — Multi-Agent", page_icon="🚀", layout="wide")
+    st.set_page_config(page_title="Product Marketing", page_icon="🚀", layout="wide")
     apply_styles()
     initialize_session_state()
 
     doc_count = get_doc_count()
     render_sidebar(doc_count)
 
-    st.markdown("# 🚀 Galileo Marketing Assistant")
+    st.markdown("# 🚀 Product Marketing")
     st.markdown(
-        '<p class="hero-subtitle">Ask about Galileo products, compare with competitors, or generate marketing content — the right agent handles it.</p>',
+        '<p class="hero-subtitle">Ask about your products, compare with competitors, or generate marketing content — the right agent handles it.</p>',
         unsafe_allow_html=True,
     )
 
     if not st.session_state.messages and doc_count == 0:
-        st.info("👈 Add Galileo product docs to the knowledge base first — expand **Add Knowledge Base Docs** in the sidebar.")
+        st.info("👈 Add product docs to the knowledge base first — expand **Add Knowledge Base Docs** in the sidebar.")
 
     render_chat_history()
 
-    new_prompt = st.chat_input("Ask about Galileo, or request marketing content...")
+    new_prompt = st.chat_input("Ask about your products, or request marketing content...")
     if new_prompt:
         handle_new_prompt(new_prompt)
 

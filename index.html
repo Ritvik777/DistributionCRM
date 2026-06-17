@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Galileo: AI Marketing Agent with Observations & Evals</title>
-  <meta name="description" content="Professional technical walkthrough of the Galileo multi-agent architecture, state flow, tools, graph routing, and evaluation framework.">
+  <title>Product Marketing — Multi-Agent RAG with Observations & Evals</title>
+  <meta name="description" content="Technical walkthrough of the Product Marketing multi-agent architecture, state flow, tools, graph routing, and evaluation framework.">
   <style>
     @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
 
@@ -413,7 +413,7 @@
   <main class="container">
     <section class="hero">
       <div class="eyebrow">Technical Walkthrough</div>
-      <h1>Galileo: AI Marketing Agent with Observations & Evals</h1>
+      <h1>Product Marketing — Multi-Agent RAG with Observations & Evals</h1>
       <p class="lead">A professional, plain-English walkthrough of your real multi-agent codebase: framework choices, node-level graph flow, state behavior, tool usage, observability, and evaluation pipeline.</p>
       <p class="hero-intro">
         This multi-agent system is built to handle two real business workflows in one place: <strong>GTM product assistance</strong> and <strong>outreach content execution</strong>.
@@ -636,13 +636,13 @@ def _extract_observed_tools(result: dict[str, Any]) -&gt; set[str]:
 
         <h3 class="file-label">app.py — Streamlit shell</h3>
         <pre class="code-snippet">def main() -&gt; None:
-    st.set_page_config(page_title="Galileo AI — Multi-Agent", ...)
+    st.set_page_config(page_title="Product Marketing", ...)
     apply_styles()
     initialize_session_state()
     doc_count = get_doc_count()
     render_sidebar(doc_count)
     render_chat_history()
-    new_prompt = st.chat_input("Ask about Galileo, or request marketing content...")
+    new_prompt = st.chat_input("Ask about your products, or request marketing content...")
     if new_prompt:
         handle_new_prompt(new_prompt)</pre>
 
@@ -769,7 +769,7 @@ def get_llm(temperature=0.7):
           <tr><th>State field</th><th>Who writes it</th><th>Purpose</th><th>Typical value</th></tr>
         </thead>
         <tbody>
-          <tr><td><span class="mono">question</span></td><td><span class="mono">ask()</span></td><td>Original user request</td><td>"What does Galileo cost?"</td></tr>
+          <tr><td><span class="mono">question</span></td><td><span class="mono">ask()</span></td><td>Original user request</td><td>"What does this product cost?"</td></tr>
           <tr><td><span class="mono">agent_type</span></td><td><span class="mono">classify</span></td><td>Branch selector</td><td><span class="mono">gtm</span> or <span class="mono">outreach</span></td></tr>
           <tr><td><span class="mono">context</span></td><td><span class="mono">gtm_retrieve</span> / <span class="mono">outreach_research</span></td><td>Tool-generated evidence context</td><td>KB snippets, web notes, leads</td></tr>
           <tr><td><span class="mono">is_pricing</span></td><td><span class="mono">pricing_gate</span></td><td>Controls pricing branch behavior</td><td><span class="mono">true</span> / <span class="mono">false</span></td></tr>
@@ -850,7 +850,7 @@ def get_llm(temperature=0.7):
       <div class="three-col">
         <article class="panel">
           <h3>Example A - Pricing</h3>
-          <p><strong>User:</strong> "What does Galileo cost?"</p>
+          <p><strong>User:</strong> "What does this product cost?"</p>
           <p><strong>Path:</strong> <span class="mono">classify -> gtm_retrieve -> pricing_gate -> collect_email</span></p>
           <p><strong>Outcome:</strong> asks for verified email before full pricing details.</p>
         </article>

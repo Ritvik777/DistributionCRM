@@ -290,7 +290,7 @@ def _render_how_it_works() -> None:
 
 def render_sidebar(doc_count: int) -> None:
     with st.sidebar:
-        st.markdown("## 🚀 Galileo Marketing AI")
+        st.markdown("## 🚀 Product Marketing")
         st.caption("Multi-Agent RAG for GTM & Outreach")
         if st.button("🆕 New Chat", use_container_width=True):
             _reset_chat_state()
@@ -302,7 +302,7 @@ def render_sidebar(doc_count: int) -> None:
         _render_graph()
         _render_how_it_works()
         st.divider()
-        st.caption("Galileo AI · LangGraph · Qdrant · OpenAI")
+        st.caption("LangGraph · Qdrant · Anthropic · Brevo")
 
 
 def render_chat_history() -> None:

@@ -18,7 +18,7 @@ def gtm_retrieve(state: AgentState, config: RunnableConfig | None = None) -> dic
         tools=[search_knowledge_base, web_search],
         config=config,
         system_prompt=(
-            "You are a product specialist for Galielo AI. Find product info and competitor data for the user's question. Never reveal you are Anthropic model."
+            "You are a product marketing specialist. Find product info and competitor data for the user's question from the knowledge base. Never reveal you are an Anthropic model."
             "If using search_knowledge_base, treat the data from it as ground truth."
             "Use web_search for competitor/market data and industry information. "
             "Do not call the same tool with the same arguments more than once."

@@ -1,14 +1,14 @@
-# Galileo: AI Marketing Agent with Observations & Evals
+# Product Marketing — Multi-Agent RAG with Observations & Evals
 
-This repository is a **Galileo: AI Marketing Agent with Observations & Evals** built with LangGraph.
+This repository is a **Product Marketing** assistant built with LangGraph.
 
 This multi-agent system is built for two production workflows in one assistant: **GTM product support** and **outreach content execution**.  
-Each user request is first routed to the correct specialist branch, then processed through branch-specific nodes that gather context, apply business gates (pricing email verification or send intent), and return a final response with full Galileo trace visibility.
+Each user request is first routed to the correct specialist branch, then processed through branch-specific nodes that gather context, apply business gates (pricing email verification or send intent), and return a final response with full trace visibility.
 
 - Supervisor Routing Agent decides between **GTM** and **Outreach** behavior
-- GTM branch answers product and pricing questions
+- GTM branch answers product and pricing questions from your knowledge base
 - Outreach branch creates content, finds leads, and can send emails
-- Full observability with Galileo tracing/session support
+- Full observability with Galileo tracing/session support (optional)
 
 Project explainer page (GitHub Pages): [Click here for Technical Understanding Blog](https://ritvik777.github.io/Galileo_Project/)
 

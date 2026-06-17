@@ -134,7 +134,7 @@ def send_email(to_email: str, subject: str, html_body: str) -> str:
     if not from_email or from_email == "you@yourcompany.com":
         return "ERROR: BREVO_FROM_EMAIL not configured in .env"
 
-    from_name = os.getenv("BREVO_FROM_NAME", "Galileo Marketing AI")
+    from_name = os.getenv("BREVO_FROM_NAME", "Product Marketing")
     payload = {
         "sender": {"name": from_name, "email": from_email},
         "to": [{"email": to_email}],

@@ -1,6 +1,6 @@
-# Galileo Evaluations and Project Run Guide
+# Product Marketing — Evaluations and Project Run Guide
 
-This folder contains the evaluation harness for the current **multi-agent Galileo Marketing Assistant**.
+This folder contains the evaluation harness for the **Product Marketing** multi-agent assistant.
 The system is designed to run two branches from one entrypoint: **GTM support** and **Outreach execution**.  
 Runtime flow is: classify request -> run branch nodes -> apply gate logic -> produce answer/send action, with Galileo tracing and eval logging across the full path.
 

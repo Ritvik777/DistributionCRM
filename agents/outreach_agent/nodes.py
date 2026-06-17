@@ -151,7 +151,7 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             "- Connect their likely pain points to our product benefits\n"
             "- Keep each email 2-3 short paragraphs\n"
             "- Use HTML formatting (<p>, <b>)\n"
-            "- Sign off as 'The Galileo Team'\n"
+            "- Sign off as 'The Product Marketing Team'\n"
             "- NO placeholder text like [Your Name] — use real data only\n\n"
             "Format EACH email as:\n"
             "**To: FirstName LastName** (their@email.com)\n"
@@ -184,7 +184,7 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             "- If they ask for an email: write ONLY an email\n"
             "- Do NOT create multiple content types\n"
             "- No placeholder text like [Your Name]\n"
-            "- Sign off as 'The Galileo Team'\n"
+            "- Sign off as 'The Product Marketing Team'\n"
             f"{pricing_safety}\n"
             f"{recipient_hint}\n"
             f"Context:\n{ctx}\n\n"
@@ -232,7 +232,7 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
         }
 
     subject_match = re.search(r'\*{0,2}Subject:?\*{0,2}\s*(.+)', content)
-    subject = subject_match.group(1).strip() if subject_match else "A Personalized Introduction to Galileo"
+    subject = subject_match.group(1).strip() if subject_match else "A personalized product introduction"
 
     body = re.sub(r'\*{0,2}To:?\*{0,2}.*\n?', '', content)
     body = re.sub(r'\*{0,2}Subject:?\*{0,2}.*\n?', '', body)
@@ -257,7 +257,7 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
         <div style="font-family: -apple-system, Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1a1a1a; line-height: 1.6;">
             {body_html}
             <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 24px 0;">
-            <p style="font-size: 12px; color: #999;">Sent via Galileo Marketing AI</p>
+            <p style="font-size: 12px; color: #999;">Sent via Product Marketing</p>
         </div>
         """
 
