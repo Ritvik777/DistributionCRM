@@ -1,6 +1,5 @@
 import re
 import streamlit as st
-from datetime import datetime, UTC
 import os
 from uuid import uuid4
 from services.vector_db_service import (
@@ -89,6 +88,7 @@ STYLE_BLOCK = """
     }
     .badge-gtm { background: #eeeeee; color: #111111; }
     .badge-outreach { background: #eeeeee; color: #111111; }
+    .badge-crm { background: #eeeeee; color: #111111; }
     .trace-step {
         background: var(--card-bg);
         color: var(--text-main);
@@ -127,6 +127,7 @@ STYLE_BLOCK = """
 BADGES = {
     "gtm": ("🎯 GTM Agent", "badge-gtm"),
     "outreach": ("📝 Outreach Agent", "badge-outreach"),
+    "crm": ("🗂️ CRM Agent", "badge-crm"),
 }
 SEND_WORDS = ["send it", "send now", "go ahead and send", "yes send", "please send"]
 MAX_HISTORY_MESSAGES = 10
@@ -215,7 +216,7 @@ def _render_stats(doc_count: int) -> None:
         st.markdown(
             """
             <div class="stat-card">
-                <div class="stat-number">3</div>
+                <div class="stat-number">4</div>
                 <div class="stat-label">Agents</div>
             </div>
             """,
@@ -325,7 +326,8 @@ def _render_how_it_works() -> None:
         st.markdown("""
 **Supervisor Routing Agent** classifies your message:
 - Product / pricing question → **GTM Agent**
-- Content creation / lead research request → **Outreach Agent**
+- Write/send content or find new prospects → **Outreach Agent**
+- Anything in Salesforce/CRM → **CRM Agent**
 
 **GTM Agent** 🎯
 - Searches product docs + live web for answers
@@ -334,19 +336,19 @@ def _render_how_it_works() -> None:
 
 **Outreach Agent** 📝
 - Researches product context and audience
-- Finds leads via Apollo (job title, industry)
-- Checks / updates **Salesforce CRM** when configured (search leads, upsert, auto-log after send)
+- Finds new leads via Apollo (job title, industry)
 - Creates LinkedIn posts, emails, marketing copy
 - Can send emails via Brevo after you **confirm** in the UI (review draft first)
-- Uses: `search_knowledge_base`, `web_search`, `apollo_search`, `salesforce_query_records`, `salesforce_dml_records`, `send_email`
+- Auto-logs a Task in Salesforce after a successful send
+- Uses: `search_knowledge_base`, `web_search`, `apollo_search`, `salesforce_search_leads`, `send_email`
 
-**Tools:**
-- `search_knowledge_base` (Qdrant) — product docs from your knowledge base
-- `web_search` (DuckDuckGo) — live web for market/competitor info
-- `apollo_search` (Apollo.io) — find leads by job title, location, industry
-- `salesforce_query_records` / `salesforce_dml_records` — your TypeScript MCP server tools (stdio)
-- `salesforce_search_leads` / `salesforce_upsert_lead` — convenience wrappers for common CRM flows
-- `send_email` (Brevo) — deliver emails; successful sends auto-log a Task in Salesforce
+**CRM Agent** 🗂️
+- Fetch / list / search Leads, Contacts, Accounts, Opportunities
+- SOQL + aggregate (GROUP BY / COUNT) queries
+- Create / update / delete records; upsert leads
+- Describe objects, search objects
+- Read / write / execute **Apex** (via your TypeScript MCP server)
+- Uses: `salesforce_query_records`, `salesforce_aggregate_query`, `salesforce_dml_records`, `salesforce_describe_object`, `salesforce_read_apex`, `salesforce_write_apex`, `salesforce_execute_anonymous`
 """)
 
 
@@ -360,8 +362,7 @@ def render_sidebar(doc_count: int) -> None:
         st.divider()
         _render_stats(doc_count)
         if st.session_state.get("pending_drafts") and _draft_has_recipient(st.session_state.pending_drafts):
-            st.warning("📧 Email draft ready — confirm to send via Brevo.")
-            _render_confirm_send_button("sidebar")
+            st.warning("📧 Email draft ready — use **Confirm & Send Email** in the chat to send via Brevo.")
         st.divider()
         _render_doc_upload()
         _render_kb_manage()
@@ -495,8 +496,5 @@ def handle_new_prompt(prompt: str) -> None:
         if result.get("send_intent") and not result.get("send_confirmed"):
             st.caption("💡 When you're happy with the draft, click **Confirm & Send Email** below.")
         _render_trace(result.get("steps", []))
-        if st.session_state.get("pending_drafts") and _draft_has_recipient(st.session_state.pending_drafts):
-            st.markdown("---")
-            _render_confirm_send_button("inline")
 
     _push_assistant_message(result)

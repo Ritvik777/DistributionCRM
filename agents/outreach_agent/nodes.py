@@ -1,10 +1,11 @@
 import logging
+import os
 import re
 
 from langchain_core.runnables import RunnableConfig
 
 from agents.state import AgentState
-from agents.chat import build_turn_context, wants_crm_fetch, wants_crm_list_fetch
+from agents.chat import build_turn_context
 from agents.schemas import LeadsGateDecision, SendIntentDecision
 from agents.structured import invoke_structured
 from llm import get_llm
@@ -15,9 +16,7 @@ from agents.tools import (
     send_email,
     call_tools,
     salesforce_search_leads,
-    salesforce_upsert_lead,
     salesforce_query_records,
-    salesforce_dml_records,
 )
 from observability import merge_node_config
 
@@ -138,111 +137,59 @@ def _parse_recipient_name(block: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+# Part/SKU tokens like LED-RED-5MM, ABC-123, MPN1234-A
+_PART_TOKEN_RE = re.compile(r"\b[A-Z0-9]{2,}(?:-[A-Z0-9]+){1,}\b")
+# Labeled fields in KB/quotation context: "Part Number: X", "SKU: Y", "MPN # Z"
+_PART_LABEL_RE = re.compile(
+    r"(?:part\s*(?:no|number|#)?|sku|mpn|model)\s*[:#]?\s*([A-Za-z0-9][\w\-./]{2,})",
+    re.IGNORECASE,
+)
+
+
+def _extract_products(*texts: str) -> str:
+    """Collect part numbers / SKUs mentioned in the email + retrieved context for the CRM record."""
+    found: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        if not text:
+            continue
+        for match in _PART_LABEL_RE.findall(text):
+            token = match.strip().strip(".,;")
+            if token and token.lower() not in seen:
+                seen.add(token.lower())
+                found.append(token)
+        for token in _PART_TOKEN_RE.findall(text):
+            if token.lower() not in seen:
+                seen.add(token.lower())
+                found.append(token)
+    return ", ".join(found[:15])
+
+
+def _sender_label() -> str:
+    name = os.getenv("BREVO_FROM_NAME", "Product Marketing")
+    email = os.getenv("BREVO_FROM_EMAIL", "")
+    return f"{name} <{email}>" if email else name
+
+
 def _salesforce_tools():
+    """CRM tools available to outreach for lead de-duplication during research."""
     if not is_salesforce_configured():
         return []
-    return [
-        salesforce_query_records,
-        salesforce_dml_records,
-        salesforce_search_leads,
-        salesforce_upsert_lead,
-    ]
-
-
-def _fetch_latest_salesforce_leads(limit: int = 10) -> str:
-    from services.salesforce_client import uses_mcp_server
-    from services.salesforce_mcp import call_mcp_tool
-
-    args = {
-        "objectName": "Lead",
-        "fields": ["Id", "Name", "Email", "Company", "Title", "Status", "CreatedDate"],
-        "orderBy": "CreatedDate DESC",
-        "limit": limit,
-    }
-    if uses_mcp_server():
-        return call_mcp_tool("salesforce_query_records", args)
-    return salesforce_query_records.invoke({
-        "object_name": "Lead",
-        "fields": args["fields"],
-        "order_by": "CreatedDate DESC",
-        "limit": limit,
-    })
-
-
-def _format_crm_leads_markdown(raw: str) -> str:
-    from services.salesforce_mcp import parse_query_records
-
-    rows = parse_query_records(raw)
-    if not rows:
-        return "No leads found in Salesforce."
-
-    lines = [
-        "## Latest Salesforce Leads",
-        "",
-        "| Name | Email | Company | Title | Status |",
-        "| --- | --- | --- | --- | --- |",
-    ]
-    for row in rows:
-        def cell(key: str) -> str:
-            val = row.get(key, "")
-            return "" if val in (None, "null", "None") else str(val)
-
-        lines.append(
-            f"| {cell('Name')} | {cell('Email')} | {cell('Company')} | {cell('Title')} | {cell('Status')} |"
-        )
-    return "\n".join(lines)
+    return [salesforce_search_leads, salesforce_query_records]
 
 
 def outreach_research(state: AgentState, config: RunnableConfig | None = None) -> dict:
     turn = build_turn_context(state)
 
-    if wants_crm_list_fetch(turn):
-        if not is_salesforce_configured():
-            return {
-                "context": "",
-                "answer": "Salesforce is not configured. Add SALESFORCE_* variables to `.env`.",
-                "steps": ["Outreach Research → CRM fetch blocked (not configured)"],
-            }
-        try:
-            raw = _fetch_latest_salesforce_leads(limit=10)
-            answer = _format_crm_leads_markdown(raw)
-            return {
-                "context": raw,
-                "answer": answer,
-                "steps": ["Outreach Research → CRM fetch (salesforce_query_records)"],
-            }
-        except Exception as exc:
-            return {
-                "context": "",
-                "answer": f"Could not fetch leads from Salesforce: {exc}",
-                "steps": [f"Outreach Research → CRM fetch failed ({exc})"],
-            }
-
     path, source = _leads_gate_decision(state, config)
     wants_leads = path == "leads"
-    wants_crm = path == "crm"
 
-    if wants_crm:
-        tools = _salesforce_tools()
-        ctx, log = call_tools(
-            turn,
-            tools=tools,
-            config=config,
-            system_prompt=(
-                "You are a CRM research assistant. The user wants data from Salesforce.\n"
-                "Call salesforce_query_records or salesforce_search_leads to answer their question.\n"
-                "For latest/recent leads use objectName Lead, orderBy CreatedDate DESC.\n"
-                "Do NOT call apollo_search unless the user also wants net-new prospecting."
-            ),
-        )
-        path_label = "crm"
-    elif wants_leads:
+    if wants_leads:
         tools = [apollo_search, search_knowledge_base, *_salesforce_tools()]
         sf_hint = ""
         if is_salesforce_configured():
             sf_hint = (
-                "3. Call salesforce_search_leads or salesforce_query_records to check CRM before outreach\n"
-                "4. Call salesforce_upsert_lead or salesforce_dml_records to add/update leads in Salesforce\n\n"
+                "3. Call salesforce_search_leads to check CRM and avoid duplicating existing contacts\n\n"
             )
         ctx, log = call_tools(
             turn,
@@ -284,9 +231,6 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
 
 
 def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -> dict:
-    if state.get("answer") and wants_crm_list_fetch(build_turn_context(state)):
-        return {"steps": ["Outreach Generate → CRM list (passthrough)"]}
-
     llm = get_llm(temperature=0.7)
 
     ctx = state.get("context", "")
@@ -431,11 +375,15 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
             sent.append(draft["to_email"])
             if is_salesforce_configured():
                 try:
+                    products = _extract_products(draft["body"], draft["subject"], state.get("context", ""))
                     crm = log_email_activity(
                         email=draft["to_email"],
                         subject=draft["subject"],
                         body=draft["body"],
                         recipient_name=draft.get("recipient_name", ""),
+                        products=products,
+                        reason=draft["subject"],
+                        sent_by=_sender_label(),
                     )
                     crm_logged.append(f"{draft['to_email']} (Task {crm['task_id']})")
                 except Exception as exc:
@@ -461,31 +409,3 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
         "answer": f"{summary}---\n\n{state['answer']}",
         "steps": [f"Outreach Send → {', '.join(step_parts)}"],
     }
-
-
-
-# User question
-#      ↓
-# [outreach_research]
-#   - leads vs content gate (LLM)
-#   - Leads → Apollo + KB
-#   - Content → KB + web search
-#      ↓
-# [outreach_generate]
-#   - Leads → one personalized email per lead
-#   - Content → single email or LinkedIn post
-#      ↓
-# [send_gate]
-#   - send vs review gate (LLM)
-#      ↓
-# route_send
-#   - "review" → END (review only)
-#   - "send" → outreach_send
-#      ↓
-# [outreach_send]
-#   - Extract emails from draft/question
-#   - Parse subject and body
-#   - Send each via send_email (Brevo)
-#   - Append summary to answer
-#      ↓
-# END

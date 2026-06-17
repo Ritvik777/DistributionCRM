@@ -4,10 +4,12 @@ from pydantic import BaseModel, Field
 
 
 class RouteDecision(BaseModel):
-    agent_type: Literal["gtm", "outreach"] = Field(
+    agent_type: Literal["gtm", "outreach", "crm"] = Field(
         description=(
-            "gtm for product/pricing research; outreach for emails, content, "
-            "finding leads, or Salesforce/CRM lead lookups"
+            "gtm for product/pricing research; "
+            "outreach for writing/sending emails, content, or finding NEW prospects; "
+            "crm for Salesforce operations: fetch/list leads or contacts, SOQL/aggregate "
+            "queries, record create/update/delete, describe objects, and Apex read/write/execute"
         )
     )
 
@@ -25,9 +27,6 @@ class SendIntentDecision(BaseModel):
 
 
 class LeadsGateDecision(BaseModel):
-    path: Literal["leads", "content", "crm"] = Field(
-        description=(
-            "crm to fetch/list/search existing leads in Salesforce/CRM; "
-            "leads to find new prospects (Apollo); content to write marketing copy"
-        )
+    path: Literal["leads", "content"] = Field(
+        description="leads to find new prospects (Apollo); content to write marketing copy"
     )

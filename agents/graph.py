@@ -3,6 +3,7 @@ from agents.state import AgentState
 from agents.router_agent import classify, route
 from agents.gtm_agent import gtm_retrieve, pricing_gate, route_pricing, collect_email, route_email, gtm_generate
 from agents.outreach_agent import outreach_research, outreach_generate, send_gate, route_send, outreach_send
+from agents.crm_agent import crm_research, crm_generate
 
 
 def build_graph():
@@ -17,11 +18,14 @@ def build_graph():
     g.add_node("outreach_generate", outreach_generate)
     g.add_node("send_gate", send_gate)
     g.add_node("outreach_send", outreach_send)
+    g.add_node("crm_research", crm_research)
+    g.add_node("crm_generate", crm_generate)
 
     g.add_edge(START, "classify")
     g.add_conditional_edges("classify", route, {
         "gtm": "gtm_retrieve",
         "outreach": "outreach_research",
+        "crm": "crm_research",
     })
 
     # GTM pipeline
@@ -44,6 +48,10 @@ def build_graph():
         "send": "outreach_send",
     })
     g.add_edge("outreach_send", END)
+
+    # CRM pipeline
+    g.add_edge("crm_research", "crm_generate")
+    g.add_edge("crm_generate", END)
 
     return g.compile()
 

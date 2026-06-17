@@ -7,49 +7,60 @@ _CRM_LIST_RE = re.compile(
     r"\b(fetch|get|show|list|latest|recent|pull|retrieve|give me|display)\b",
     re.IGNORECASE,
 )
-_CRM_ACTION_RE = re.compile(
-    r"\b(fetch|get|show|list|latest|recent|pull|retrieve|find|search|lookup|give me|display)\b",
-    re.IGNORECASE,
-)
 _CRM_OBJECT_RE = re.compile(
-    r"\b(leads?|contacts?|accounts?|prospects?)\b",
+    r"\b(leads?|contacts?|accounts?|prospects?|opportunit(?:y|ies)|cases?|deals?)\b",
     re.IGNORECASE,
 )
-_CRM_HISTORY_RE = re.compile(
-    r"(latest salesforce leads|salesforce lead|crm fetch|salesforce_query)",
+# CRM operations that, combined with a CRM object, indicate a Salesforce data/metadata task.
+_CRM_OP_RE = re.compile(
+    r"\b(count|how many|aggregate|group by|sum|average|avg|describe|schema|fields?|"
+    r"update|create|delete|insert|upsert|modify|status|save|add|log)\b",
+    re.IGNORECASE,
+)
+# Strong CRM signals: Apex/SOQL/metadata operations always belong to the CRM agent.
+_CRM_APEX_RE = re.compile(
+    r"\b(apex|soql|sosl|execute anonymous|trigger|aggregate query|describe (the )?object)\b",
+    re.IGNORECASE,
+)
+# Outreach verbs: when present (without an explicit CRM platform word), prefer the outreach agent.
+_OUTREACH_VERB_RE = re.compile(
+    r"\b(email|e-?mail|draft|compose|send|outreach|reach out|cold (email|message)|"
+    r"write (a|an) (email|post|message|linkedin)|linkedin post)\b",
     re.IGNORECASE,
 )
 
 
-def wants_crm_fetch(text: str) -> bool:
-    """True when the user wants to read/list lead or contact data (Salesforce/CRM)."""
-    has_object = bool(_CRM_OBJECT_RE.search(text))
-    has_action = bool(_CRM_ACTION_RE.search(text))
-    has_platform = bool(_CRM_FETCH_RE.search(text))
-    has_list_verb = bool(_CRM_LIST_RE.search(text))
-    has_crm_history = bool(_CRM_HISTORY_RE.search(text))
+def is_crm_request(text: str) -> bool:
+    """True when the message should be handled by the dedicated CRM (Salesforce) agent.
 
-    if has_platform and (has_action or has_object):
+    Covers reads (leads/contacts/objects), aggregates, record DML, and Apex/SOQL work.
+    """
+    # Apex / SOQL / metadata work is unambiguously CRM.
+    if _CRM_APEX_RE.search(text):
         return True
-    # "fetch latest leads", "show contacts", "get leads" — no platform word required
-    if has_list_verb and has_object:
+    # Explicit platform mention (salesforce/sfdc/crm) → CRM agent.
+    if _CRM_FETCH_RE.search(text):
         return True
-    # Follow-up after a prior Salesforce leads response in chat history
-    if has_crm_history and has_action and has_object:
+    # Operations on a CRM object (count/update/describe leads/opps/etc.) with no outreach intent.
+    if _OUTREACH_VERB_RE.search(text):
+        return False
+    if _CRM_OBJECT_RE.search(text) and _CRM_OP_RE.search(text):
+        return True
+    # "fetch/list/show leads/contacts" with no outreach intent → CRM data lookup.
+    if wants_crm_list_fetch(text):
         return True
     return False
 
 
 def wants_crm_list_fetch(text: str) -> bool:
-    """True when we should run a direct Salesforce query for latest leads/contacts."""
+    """True when we should run a direct Salesforce query for latest leads/contacts.
+
+    Intended to run on the CURRENT user message only (not chat history).
+    """
     has_object = bool(_CRM_OBJECT_RE.search(text))
-    if _CRM_FETCH_RE.search(text) and has_object:
-        return True
-    if _CRM_LIST_RE.search(text) and has_object:
-        return True
-    if _CRM_HISTORY_RE.search(text) and _CRM_LIST_RE.search(text):
-        return True
-    return False
+    if not has_object:
+        return False
+    return bool(_CRM_FETCH_RE.search(text) or _CRM_LIST_RE.search(text))
 
 
 def trim_chat_history(history: list[dict] | None, max_messages: int = MAX_HISTORY_MESSAGES) -> list[dict]:

@@ -11,7 +11,6 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
 GALILEO_API_KEY = os.getenv("GALILEO_API_KEY")
 GALILEO_PROJECT = os.getenv("GALILEO_PROJECT")
 GALILEO_LOG_STREAM = os.getenv("GALILEO_LOG_STREAM")
-GALILEO_CONSOLE_URL = os.getenv("GALILEO_CONSOLE_URL")
 COLLECTION_NAME = "Rama"
 # Qdrant Cloud Inference: embeddings are generated server-side (no local model, no external API).
 DENSE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"

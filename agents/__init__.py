@@ -2,12 +2,16 @@
 agents/ — The multi-agent system
 ==================================
   state.py              → shared pipeline state
-  tools.py              → shared tools (RAG + web search)
+  chat.py               → conversation history + intent helpers
+  schemas.py            → structured-output models for gates/routing
+  structured.py         → structured LLM invocation helper
+  tools/                → shared tools (KB, web, Apollo, Salesforce, email) + runner
   graph.py              → wires everything into a LangGraph
 
   router_agent/         → 🚦 Supervisor Routing Agent (picks which agent handles it)
   gtm_agent/            → 🎯 GTM Agent (product questions + pricing gate)
-  outreach_agent/       → 📝 Outreach Agent (content creation)
+  outreach_agent/       → 📝 Outreach Agent (content creation + sending)
+  crm_agent/            → 🗂️ CRM Agent (Salesforce reads, DML, aggregates, Apex)
 """
 
 from agents.graph import graph

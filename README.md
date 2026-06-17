@@ -5,9 +5,10 @@ This repository is a **Product Marketing** assistant built with LangGraph.
 This multi-agent system is built for two production workflows in one assistant: **GTM product support** and **outreach content execution**.  
 Each user request is first routed to the correct specialist branch, then processed through branch-specific nodes that gather context, apply business gates (pricing email verification or send intent), and return a final response with full trace visibility.
 
-- Supervisor Routing Agent decides between **GTM** and **Outreach** behavior
+- Supervisor Routing Agent decides between **GTM**, **Outreach**, and **CRM** behavior
 - GTM branch answers product and pricing questions from your knowledge base
-- Outreach branch creates content, finds leads, and can send emails
+- Outreach branch creates content, finds new leads, and can send emails
+- CRM branch runs all Salesforce operations (query/list leads, aggregates, record DML, Apex)
 - Full observability with Galileo tracing/session support (optional)
 
 Project explainer page (GitHub Pages): [Click here for Technical Understanding Blog](https://ritvik777.github.io/AI-Market/)
@@ -24,8 +25,10 @@ START -> classify
           |                                         \--pricing-------> collect_email --valid--> gtm_generate -> END
           |                                                                            \--no_email----------> END
           |
-          \- outreach -> outreach_research -> outreach_generate -> send_gate --review--> END
-                                                                     \--send------------> outreach_send -> END
+          |- outreach -> outreach_research -> outreach_generate -> send_gate --review--> END
+          |                                                          \--send------------> outreach_send -> END
+          |
+          \- crm      -> crm_research -> crm_generate -> END
 ```
 
 ### Agents
@@ -40,10 +43,16 @@ START -> classify
   - Generates final product/pricing response
 
 - **Outreach Agent** (`agents/outreach_agent/nodes.py`)
-  - Researches context (Apollo for lead-intent; Salesforce CRM when configured)
+  - Researches context (Apollo for net-new leads; Salesforce de-dup when configured)
   - Generates marketing content (email/post)
   - Send gate determines review-only vs actual send via Brevo
   - After a successful send, logs a completed **Task** in Salesforce (creates Lead if needed)
+
+- **CRM Agent** (`agents/crm_agent/nodes.py`)
+  - Owns all Salesforce/CRM operations via your TypeScript MCP server
+  - Fetch/list/search records, SOQL + aggregate queries, record create/update/delete/upsert
+  - Describe/search objects; read, write, and execute Apex
+  - Fast-path Markdown table for simple "latest leads" fetches; LLM tool loop for everything else
 
 ### Shared state
 
@@ -66,10 +75,11 @@ Defined in `agents/state.py`:
 app.py                          # Streamlit entrypoint
 ui/ui.py                        # Sidebar, chat, trace rendering
 agents/graph.py                 # LangGraph node wiring
-agents/router_agent/nodes.py    # classify + route
+agents/router_agent/nodes.py    # classify + route (gtm / outreach / crm)
 agents/gtm_agent/nodes.py       # GTM branch nodes
 agents/outreach_agent/nodes.py  # Outreach branch nodes
-agents/tools.py                 # KB/web/Apollo/Brevo/Salesforce tools + tool loop
+agents/crm_agent/nodes.py       # CRM (Salesforce) branch nodes
+agents/tools/                   # KB/web/Apollo/Brevo/Salesforce tools + tool loop (one file per concern)
 services/salesforce_mcp.py      # Python MCP client → spawns TypeScript MCP server (stdio)
 services/salesforce_client.py   # CRM ops (MCP by default, Python REST fallback)
 vector_db/database.py           # Qdrant hybrid search (dense + BM25 via Cloud Inference)
@@ -92,7 +102,7 @@ evals/run_galileo_evals.py      # baseline evaluation suite
 | `agents/router_agent/nodes.py` | Supervisor Routing Agent classification logic (`gtm` vs `outreach`) using LLM. |
 | `agents/gtm_agent/nodes.py` | GTM branch nodes: retrieve, pricing/email gates, and GTM answer generation. |
 | `agents/outreach_agent/nodes.py` | Outreach branch nodes: research, draft generation, send gate, send execution. |
-| `agents/tools.py` | Shared tools and tool-routing loop (`search_knowledge_base`, `web_search`, `apollo_search`, `send_email`). |
+| `agents/tools/` | Shared tools split by concern (`knowledge_base`, `web`, `apollo`, `salesforce`, `email`) plus the `runner` tool-routing loop. |
 | `vector_db/database.py` | Qdrant setup, hybrid search (dense + BM25), add/count operations. |
 | `vector_db/chunker.py` | Text chunking and PDF/Excel/CSV extraction utilities. |
 | `llm.py` | Anthropic model factory and env validation. |

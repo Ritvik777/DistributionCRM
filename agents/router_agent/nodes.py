@@ -3,7 +3,7 @@ import logging
 from langchain_core.runnables import RunnableConfig
 
 from agents.state import AgentState
-from agents.chat import build_turn_context, wants_crm_fetch
+from agents.chat import build_turn_context, is_crm_request
 from agents.schemas import RouteDecision
 from agents.structured import invoke_structured
 from llm import get_llm
@@ -11,7 +11,7 @@ from observability import merge_node_config
 
 logger = logging.getLogger(__name__)
 
-_ROUTING_PROMPT = """You are the routing layer for a Product Marketing assistant (GTM product knowledge + outreach content).
+_ROUTING_PROMPT = """You are the routing layer for a Product Marketing assistant with THREE specialist agents: GTM, OUTREACH, and CRM.
 
 RULES — Route to GTM for:
 - Product questions, features, pricing, cost, plans, tiers, subscriptions
@@ -24,34 +24,45 @@ RULES — Route to OUTREACH for:
 - User asks to EMAIL, SEND, MARKET, or WRITE outreach TO a recipient (person or email address)
 - Product availability or specs should be communicated TO someone else via email/outreach
 - Draft or send cold emails, LinkedIn posts, or marketing copy
-- Finding leads/prospects to contact (Apollo or net-new research)
-- Fetching, listing, or searching leads/contacts in Salesforce or CRM
-- CRM updates, logging outreach, or checking if someone exists in Salesforce
+- Finding NEW leads/prospects to contact (Apollo / net-new research)
 - Follow-ups that refine a prior draft (e.g. 'tell them we have this in stock', 'include the specs')
 - If conversation history shows outreach context, keep routing outreach on follow-ups
 
+RULES — Route to CRM for (anything operating on Salesforce/CRM data or code):
+- Fetch, list, show, or search existing Leads/Contacts/Accounts/Opportunities in Salesforce/CRM
+- SOQL queries, aggregate/GROUP BY queries (count opportunities by stage, etc.)
+- Create / update / delete CRM records; upsert leads; log CRM activity
+- Describe objects/fields, search objects, inspect schema
+- Read, write, or execute Apex code (classes, triggers, anonymous Apex)
+
 IMPORTANT: 'email X about product Y' or 'market product Y to X@email.com' → outreach (not gtm).
-IMPORTANT: 'fetch leads from Salesforce', 'show CRM contacts', 'latest leads in CRM' → outreach (not gtm).
+IMPORTANT: 'fetch leads from Salesforce', 'show CRM contacts', 'count opportunities by stage', 'write an Apex class' → crm.
+IMPORTANT: 'find VP Sales leads in fintech to email' → outreach (net-new prospecting + send), NOT crm.
 
 If unrelated to product marketing, route gtm.
 
 Examples:
 - 'Do you have led-red-5mm?' → gtm
 - 'Can you email rgaur@company.com about availability of LED Red 5mm?' → outreach
-- 'Market LED Red 5mm to buyer@example.com' → outreach
-- 'Fetch latest leads from Salesforce' → outreach
-- 'Show me contacts in CRM for Acme Corp' → outreach
-- 'Tell them we have 40k in stock' (after prior product discussion) → outreach
+- 'Find VP Marketing leads at Series B SaaS to reach out to' → outreach
+- 'Fetch latest leads from Salesforce' → crm
+- 'Show me contacts in CRM for Acme Corp' → crm
+- 'Count opportunities by stage' → crm
+- 'Write an Apex class that recalculates account revenue' → crm
+- 'Update the status of lead 00Q... to Working' → crm
 """
 
 
 def classify(state: AgentState, config: RunnableConfig | None = None) -> dict:
-    """LLM reads the message and picks: 'gtm' or 'outreach'. Falls back to gtm on failure."""
+    """LLM reads the message and picks: 'gtm', 'outreach', or 'crm'. Falls back to gtm on failure."""
     turn = build_turn_context(state)
-    if wants_crm_fetch(turn):
+    # Keyword routing must look at the CURRENT message only — using full history would
+    # let a prior CRM turn (e.g. a leads table) hijack every later message.
+    question = (state.get("question") or "").strip()
+    if is_crm_request(question):
         return {
-            "agent_type": "outreach",
-            "steps": ["Supervisor Routing Agent(keyword) → OUTREACH"],
+            "agent_type": "crm",
+            "steps": ["Supervisor Routing Agent(keyword) → CRM"],
         }
 
     invoke_config = merge_node_config(
@@ -74,8 +85,8 @@ def classify(state: AgentState, config: RunnableConfig | None = None) -> dict:
         agent = decision.agent_type
         source = "structured"
 
-    if agent == "gtm" and wants_crm_fetch(turn):
-        agent = "outreach"
+    if agent != "crm" and is_crm_request(question):
+        agent = "crm"
         source = "crm_override"
 
     return {"agent_type": agent, "steps": [f"Supervisor Routing Agent({source}) → {agent.upper()}"]}

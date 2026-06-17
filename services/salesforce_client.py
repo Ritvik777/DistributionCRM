@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 from urllib.parse import urlparse
@@ -125,12 +127,6 @@ def _mcp_find_person_by_email(email: str) -> tuple[dict[str, str] | None, str | 
             rows[0]["_ObjectType"] = obj
             return rows[0], obj
     return None, None
-
-
-def find_person_by_email(email: str) -> tuple[dict[str, Any] | None, str | None]:
-    if uses_mcp_server():
-        return _mcp_find_person_by_email(email)
-    return _python_find_person_by_email(email)
 
 
 def search_leads_and_contacts(
@@ -330,10 +326,52 @@ def log_email_activity(
     body: str,
     recipient_name: str = "",
     company: str = "",
+    products: str = "",
+    reason: str = "",
+    sent_by: str = "",
 ) -> dict[str, Any]:
+    details = {
+        "recipient_name": recipient_name,
+        "company": company,
+        "products": products,
+        "reason": reason,
+        "sent_by": sent_by,
+    }
     if uses_mcp_server():
-        return _mcp_log_email_activity(email, subject, body, recipient_name, company)
-    return _python_log_email_activity(email, subject, body, recipient_name, company)
+        return _mcp_log_email_activity(email, subject, body, recipient_name, company, details)
+    return _python_log_email_activity(email, subject, body, recipient_name, company, details)
+
+
+def _build_email_task(email: str, subject: str, body: str, who_id: str, details: dict[str, Any]) -> dict[str, Any]:
+    """Assemble a rich, fully-detailed Salesforce Task for a sent outreach email."""
+    sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    description = (
+        "=== Outreach Email Logged by Product Marketing Agent ===\n"
+        f"Recipient: {details.get('recipient_name') or '-'} <{email}>\n"
+        f"Company: {details.get('company') or '-'}\n"
+        f"Sent By: {details.get('sent_by') or '-'}\n"
+        f"Sent At: {sent_at}\n"
+        f"Reason / Topic: {details.get('reason') or subject}\n"
+        f"Products / Parts: {details.get('products') or '-'}\n\n"
+        f"--- Subject ---\n{subject}\n\n"
+        f"--- Email Body ---\n{body}"
+    )
+    return {
+        "Subject": f"Email sent: {subject[:180]}",
+        "Description": description[:32000],
+        "Status": "Completed",
+        "Priority": "Normal",
+        "ActivityDate": datetime.now(timezone.utc).date().isoformat(),
+        "WhoId": who_id,
+    }
+
+
+def _assert_dml_succeeded(output: str) -> None:
+    """Raise if an MCP salesforce_dml_records call did not insert/update successfully."""
+    match = re.search(r"Successful:\s*(\d+)", output)
+    if match and int(match.group(1)) >= 1:
+        return
+    raise RuntimeError(output.strip() or "Salesforce DML reported no successful records")
 
 
 def _mcp_log_email_activity(
@@ -342,6 +380,7 @@ def _mcp_log_email_activity(
     body: str,
     recipient_name: str,
     company: str,
+    details: dict[str, Any],
 ) -> dict[str, Any]:
     safe = _escape_soql(email.strip())
     calls: list[tuple[str, dict[str, Any]]] = [
@@ -389,18 +428,13 @@ def _mcp_log_email_activity(
         who_id = upsert["id"]
         obj = upsert["object"]
 
-    task_payload = {
-        "Subject": f"Email sent: {subject[:200]}",
-        "Description": body[:32000],
-        "Status": "Completed",
-        "Priority": "Normal",
-        "WhoId": who_id,
-    }
-    call_mcp_tools_batch([("salesforce_dml_records", {
+    task_payload = _build_email_task(email, subject, body, who_id, details)
+    insert_out = call_mcp_tools_batch([("salesforce_dml_records", {
         "operation": "insert",
         "objectName": "Task",
         "records": [task_payload],
     })])
+    _assert_dml_succeeded(insert_out[0] if insert_out else "")
     return {"task_id": "logged", "who_id": who_id, "object": obj, "email": email}
 
 
@@ -410,6 +444,7 @@ def _python_log_email_activity(
     body: str,
     recipient_name: str,
     company: str,
+    details: dict[str, Any],
 ) -> dict[str, Any]:
     sf = get_salesforce_client()
     record, obj = _python_find_person_by_email(email)
@@ -430,11 +465,5 @@ def _python_log_email_activity(
     else:
         who_id = record["Id"]
 
-    result = sf.Task.create({
-        "Subject": f"Email sent: {subject[:200]}",
-        "Description": body[:32000],
-        "Status": "Completed",
-        "Priority": "Normal",
-        "WhoId": who_id,
-    })
+    result = sf.Task.create(_build_email_task(email, subject, body, who_id, details))
     return {"task_id": result["id"], "who_id": who_id, "object": obj, "email": email}
