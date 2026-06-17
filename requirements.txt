@@ -13,3 +13,5 @@ openpyxl
 duckduckgo-search
 requests
 galileo
+simple-salesforce
+mcp

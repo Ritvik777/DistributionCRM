@@ -3,7 +3,7 @@ import logging
 from langchain_core.runnables import RunnableConfig
 
 from agents.state import AgentState
-from agents.chat import build_turn_context
+from agents.chat import build_turn_context, wants_crm_fetch
 from agents.schemas import RouteDecision
 from agents.structured import invoke_structured
 from llm import get_llm
@@ -24,11 +24,14 @@ RULES — Route to OUTREACH for:
 - User asks to EMAIL, SEND, MARKET, or WRITE outreach TO a recipient (person or email address)
 - Product availability or specs should be communicated TO someone else via email/outreach
 - Draft or send cold emails, LinkedIn posts, or marketing copy
-- Finding leads/prospects to contact
+- Finding leads/prospects to contact (Apollo or net-new research)
+- Fetching, listing, or searching leads/contacts in Salesforce or CRM
+- CRM updates, logging outreach, or checking if someone exists in Salesforce
 - Follow-ups that refine a prior draft (e.g. 'tell them we have this in stock', 'include the specs')
 - If conversation history shows outreach context, keep routing outreach on follow-ups
 
 IMPORTANT: 'email X about product Y' or 'market product Y to X@email.com' → outreach (not gtm).
+IMPORTANT: 'fetch leads from Salesforce', 'show CRM contacts', 'latest leads in CRM' → outreach (not gtm).
 
 If unrelated to product marketing, route gtm.
 
@@ -36,6 +39,8 @@ Examples:
 - 'Do you have led-red-5mm?' → gtm
 - 'Can you email rgaur@company.com about availability of LED Red 5mm?' → outreach
 - 'Market LED Red 5mm to buyer@example.com' → outreach
+- 'Fetch latest leads from Salesforce' → outreach
+- 'Show me contacts in CRM for Acme Corp' → outreach
 - 'Tell them we have 40k in stock' (after prior product discussion) → outreach
 """
 
@@ -43,6 +48,12 @@ Examples:
 def classify(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """LLM reads the message and picks: 'gtm' or 'outreach'. Falls back to gtm on failure."""
     turn = build_turn_context(state)
+    if wants_crm_fetch(turn):
+        return {
+            "agent_type": "outreach",
+            "steps": ["Supervisor Routing Agent(keyword) → OUTREACH"],
+        }
+
     invoke_config = merge_node_config(
         config,
         metadata={"node": "classify", "question": state.get("question", "")},
@@ -62,6 +73,10 @@ def classify(state: AgentState, config: RunnableConfig | None = None) -> dict:
     else:
         agent = decision.agent_type
         source = "structured"
+
+    if agent == "gtm" and wants_crm_fetch(turn):
+        agent = "outreach"
+        source = "crm_override"
 
     return {"agent_type": agent, "steps": [f"Supervisor Routing Agent({source}) → {agent.upper()}"]}
 

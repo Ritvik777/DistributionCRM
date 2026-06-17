@@ -335,15 +335,18 @@ def _render_how_it_works() -> None:
 **Outreach Agent** 📝
 - Researches product context and audience
 - Finds leads via Apollo (job title, industry)
+- Checks / updates **Salesforce CRM** when configured (search leads, upsert, auto-log after send)
 - Creates LinkedIn posts, emails, marketing copy
 - Can send emails via Brevo after you **confirm** in the UI (review draft first)
-- Uses: `search_knowledge_base`, `web_search`, `apollo_search`, `send_email`
+- Uses: `search_knowledge_base`, `web_search`, `apollo_search`, `salesforce_query_records`, `salesforce_dml_records`, `send_email`
 
-**All 4 tools:**
+**Tools:**
 - `search_knowledge_base` (Qdrant) — product docs from your knowledge base
 - `web_search` (DuckDuckGo) — live web for market/competitor info
 - `apollo_search` (Apollo.io) — find leads by job title, location, industry
-- `send_email` (Brevo) — deliver personalized emails
+- `salesforce_query_records` / `salesforce_dml_records` — your TypeScript MCP server tools (stdio)
+- `salesforce_search_leads` / `salesforce_upsert_lead` — convenience wrappers for common CRM flows
+- `send_email` (Brevo) — deliver emails; successful sends auto-log a Task in Salesforce
 """)
 
 
@@ -365,7 +368,7 @@ def render_sidebar(doc_count: int) -> None:
         _render_graph()
         _render_how_it_works()
         st.divider()
-        st.caption("LangGraph · Qdrant · Anthropic · Brevo")
+        st.caption("LangGraph · Qdrant · Anthropic · Brevo · Salesforce")
 
 
 def _execute_confirm_send() -> None:

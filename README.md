@@ -40,9 +40,10 @@ START -> classify
   - Generates final product/pricing response
 
 - **Outreach Agent** (`agents/outreach_agent/nodes.py`)
-  - Researches context (and uses Apollo for lead-intent prompts)
+  - Researches context (Apollo for lead-intent; Salesforce CRM when configured)
   - Generates marketing content (email/post)
   - Send gate determines review-only vs actual send via Brevo
+  - After a successful send, logs a completed **Task** in Salesforce (creates Lead if needed)
 
 ### Shared state
 
@@ -68,7 +69,9 @@ agents/graph.py                 # LangGraph node wiring
 agents/router_agent/nodes.py    # classify + route
 agents/gtm_agent/nodes.py       # GTM branch nodes
 agents/outreach_agent/nodes.py  # Outreach branch nodes
-agents/tools.py                 # KB/web/Apollo/Brevo tools + tool loop
+agents/tools.py                 # KB/web/Apollo/Brevo/Salesforce tools + tool loop
+services/salesforce_mcp.py      # Python MCP client → spawns TypeScript MCP server (stdio)
+services/salesforce_client.py   # CRM ops (MCP by default, Python REST fallback)
 vector_db/database.py           # Qdrant hybrid search (dense + BM25 via Cloud Inference)
 vector_db/chunker.py            # text/pdf chunking
 observability/galileo.py        # tracing/session setup
@@ -161,6 +164,7 @@ Required Galileo env vars are in `.env.example`:
 | Streamlit Docs | [docs.streamlit.io](https://docs.streamlit.io/) |
 | Apollo API | [apollo.io](https://www.apollo.io/) |
 | Brevo | [brevo.com](https://www.brevo.com/) |
+| Salesforce MCP (Cursor/Claude) | [mcp-server-salesforce](https://github.com/Ritvik777/mcp-server-salesforce) |
 | DuckDuckGo Search package | [duckduckgo-search on PyPI](https://pypi.org/project/duckduckgo-search/) |
 
 ## Setup and run
@@ -190,6 +194,11 @@ Fill `.env` with your values:
   - `BREVO_API_KEY`
   - `BREVO_FROM_EMAIL`
   - `BREVO_FROM_NAME` (optional)
+- Optional Salesforce CRM via your [TypeScript MCP server](https://github.com/Ritvik777/mcp-server-salesforce):
+  - `SALESFORCE_BACKEND=mcp` (default when Node/npx is installed) spawns `@ritvik777/mcp-server-salesforce` over stdio
+  - `SALESFORCE_BACKEND=python` uses `simple-salesforce` REST (no Node required)
+  - `SALESFORCE_MCP_COMMAND` / `SALESFORCE_MCP_ARGS` — same as Claude Desktop MCP config
+  - Auth: `SALESFORCE_CONNECTION_TYPE` + username/password, OAuth, or `Salesforce_CLI` (MCP only)
 - Observability/evals:
   - `GALILEO_API_KEY`
   - `GALILEO_PROJECT`

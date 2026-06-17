@@ -4,12 +4,31 @@ import re
 from langchain_core.runnables import RunnableConfig
 
 from agents.state import AgentState
-from agents.chat import build_turn_context
+from agents.chat import build_turn_context, wants_crm_fetch, wants_crm_list_fetch
 from agents.schemas import LeadsGateDecision, SendIntentDecision
 from agents.structured import invoke_structured
 from llm import get_llm
-from agents.tools import search_knowledge_base, web_search, apollo_search, send_email, call_tools
+from agents.tools import (
+    search_knowledge_base,
+    web_search,
+    apollo_search,
+    send_email,
+    call_tools,
+    salesforce_search_leads,
+    salesforce_upsert_lead,
+    salesforce_query_records,
+    salesforce_dml_records,
+)
 from observability import merge_node_config
+
+try:
+    from services.salesforce_client import is_salesforce_configured, log_email_activity
+except ImportError:
+    def is_salesforce_configured() -> bool:
+        return False
+
+    def log_email_activity(*args, **kwargs):
+        raise RuntimeError("Salesforce client unavailable")
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +47,8 @@ def _leads_gate_decision(state: AgentState, config: RunnableConfig | None = None
         get_llm(temperature=0),
         (
             "You are a gate in a Product Marketing outreach assistant.\n"
-            "Choose leads if the user wants to FIND prospects/people/companies to contact.\n"
+            "Choose crm if the user wants to fetch, list, or search existing leads/contacts in Salesforce/CRM.\n"
+            "Choose leads if the user wants to FIND new prospects/people/companies to contact (Apollo/net-new).\n"
             "Choose content if the user wants to write emails, posts, or marketing copy.\n"
             "If uncertain, choose content.\n\n"
             f"{turn}"
@@ -104,37 +124,158 @@ def _parse_email_drafts(content: str) -> list[dict[str, str]]:
         body = re.sub(r"^\*{0,2}Subject:?\*{0,2}.*\n?", "", body, flags=re.MULTILINE)
         body = body.strip().strip("-").strip()
         if body:
-            drafts.append({"to_email": emails[0], "subject": subject, "body": body})
+            drafts.append({
+                "to_email": emails[0],
+                "subject": subject,
+                "body": body,
+                "recipient_name": _parse_recipient_name(block),
+            })
     return drafts
+
+
+def _parse_recipient_name(block: str) -> str:
+    match = re.search(r"\*{0,2}To:?\*{0,2}\s*(.+?)\s*\(", block, re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def _salesforce_tools():
+    if not is_salesforce_configured():
+        return []
+    return [
+        salesforce_query_records,
+        salesforce_dml_records,
+        salesforce_search_leads,
+        salesforce_upsert_lead,
+    ]
+
+
+def _fetch_latest_salesforce_leads(limit: int = 10) -> str:
+    from services.salesforce_client import uses_mcp_server
+    from services.salesforce_mcp import call_mcp_tool
+
+    args = {
+        "objectName": "Lead",
+        "fields": ["Id", "Name", "Email", "Company", "Title", "Status", "CreatedDate"],
+        "orderBy": "CreatedDate DESC",
+        "limit": limit,
+    }
+    if uses_mcp_server():
+        return call_mcp_tool("salesforce_query_records", args)
+    return salesforce_query_records.invoke({
+        "object_name": "Lead",
+        "fields": args["fields"],
+        "order_by": "CreatedDate DESC",
+        "limit": limit,
+    })
+
+
+def _format_crm_leads_markdown(raw: str) -> str:
+    from services.salesforce_mcp import parse_query_records
+
+    rows = parse_query_records(raw)
+    if not rows:
+        return "No leads found in Salesforce."
+
+    lines = [
+        "## Latest Salesforce Leads",
+        "",
+        "| Name | Email | Company | Title | Status |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        def cell(key: str) -> str:
+            val = row.get(key, "")
+            return "" if val in (None, "null", "None") else str(val)
+
+        lines.append(
+            f"| {cell('Name')} | {cell('Email')} | {cell('Company')} | {cell('Title')} | {cell('Status')} |"
+        )
+    return "\n".join(lines)
+
 
 def outreach_research(state: AgentState, config: RunnableConfig | None = None) -> dict:
     turn = build_turn_context(state)
+
+    if wants_crm_list_fetch(turn):
+        if not is_salesforce_configured():
+            return {
+                "context": "",
+                "answer": "Salesforce is not configured. Add SALESFORCE_* variables to `.env`.",
+                "steps": ["Outreach Research → CRM fetch blocked (not configured)"],
+            }
+        try:
+            raw = _fetch_latest_salesforce_leads(limit=10)
+            answer = _format_crm_leads_markdown(raw)
+            return {
+                "context": raw,
+                "answer": answer,
+                "steps": ["Outreach Research → CRM fetch (salesforce_query_records)"],
+            }
+        except Exception as exc:
+            return {
+                "context": "",
+                "answer": f"Could not fetch leads from Salesforce: {exc}",
+                "steps": [f"Outreach Research → CRM fetch failed ({exc})"],
+            }
+
     path, source = _leads_gate_decision(state, config)
     wants_leads = path == "leads"
+    wants_crm = path == "crm"
 
-    if wants_leads:
+    if wants_crm:
+        tools = _salesforce_tools()
         ctx, log = call_tools(
             turn,
-            tools=[apollo_search, search_knowledge_base],
+            tools=tools,
+            config=config,
+            system_prompt=(
+                "You are a CRM research assistant. The user wants data from Salesforce.\n"
+                "Call salesforce_query_records or salesforce_search_leads to answer their question.\n"
+                "For latest/recent leads use objectName Lead, orderBy CreatedDate DESC.\n"
+                "Do NOT call apollo_search unless the user also wants net-new prospecting."
+            ),
+        )
+        path_label = "crm"
+    elif wants_leads:
+        tools = [apollo_search, search_knowledge_base, *_salesforce_tools()]
+        sf_hint = ""
+        if is_salesforce_configured():
+            sf_hint = (
+                "3. Call salesforce_search_leads or salesforce_query_records to check CRM before outreach\n"
+                "4. Call salesforce_upsert_lead or salesforce_dml_records to add/update leads in Salesforce\n\n"
+            )
+        ctx, log = call_tools(
+            turn,
+            tools=tools,
             config=config,
             system_prompt=(
                 "You are a product marketing research assistant. The user wants to find leads/prospects for outreach. You MUST:\n"
                 "1. Call apollo_search with relevant job titles\n"
-                "2. Call search_knowledge_base to get our product info for personalization\n\n"
-                "ALWAYS call apollo_search. Do NOT skip it."
+                "2. Call search_knowledge_base to get our product info for personalization\n"
+                f"{sf_hint}"
+                "ALWAYS call apollo_search when finding new prospects. "
+                "Use salesforce_search_leads to avoid duplicating contacts already in CRM."
             ),
         )
-        path_label = "leads (apollo)"
+        path_label = "leads (apollo+crm)" if is_salesforce_configured() else "leads (apollo)"
     else:
+        content_tools = [search_knowledge_base, web_search, *_salesforce_tools()]
+        sf_content = ""
+        if is_salesforce_configured():
+            sf_content = (
+                "If the user mentions a recipient email or company, call salesforce_query_records or "
+                "salesforce_search_leads first to pull existing Lead/Contact context from CRM.\n"
+            )
         ctx, log = call_tools(
             turn,
-            tools=[search_knowledge_base, web_search],
+            tools=content_tools,
             config=config,
             system_prompt=(
                 "You are a product marketing research assistant preparing outreach content.\n"
                 "Use search_knowledge_base for product specs, SKU/part numbers, stock, price, MOQ, and lead time. "
                 "If conversation history or the current message mentions a product, search the KB for it.\n"
-                "Use web_search only for target company/industry info to personalize."
+                "Use web_search only for target company/industry info to personalize.\n"
+                f"{sf_content}"
             ),
         )
         path_label = "content"
@@ -143,6 +284,9 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
 
 
 def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -> dict:
+    if state.get("answer") and wants_crm_list_fetch(build_turn_context(state)):
+        return {"steps": ["Outreach Generate → CRM list (passthrough)"]}
+
     llm = get_llm(temperature=0.7)
 
     ctx = state.get("context", "")
@@ -253,10 +397,12 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
         body = re.sub(r"^\*{0,2}To:?\*{0,2}.*\n?", "", content, flags=re.MULTILINE)
         body = re.sub(r"^\*{0,2}Subject:?\*{0,2}.*\n?", "", body, flags=re.MULTILINE)
         body = body.strip().strip("-").strip()
-        drafts = [{"to_email": email, "subject": subject, "body": body} for email in emails_found]
+        drafts = [{"to_email": email, "subject": subject, "body": body, "recipient_name": ""} for email in emails_found]
 
     sent = []
     failed = []
+    crm_logged = []
+    crm_failed = []
 
     invoke_config = merge_node_config(
         config,
@@ -283,18 +429,37 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
         )
         if "SENT" in result:
             sent.append(draft["to_email"])
+            if is_salesforce_configured():
+                try:
+                    crm = log_email_activity(
+                        email=draft["to_email"],
+                        subject=draft["subject"],
+                        body=draft["body"],
+                        recipient_name=draft.get("recipient_name", ""),
+                    )
+                    crm_logged.append(f"{draft['to_email']} (Task {crm['task_id']})")
+                except Exception as exc:
+                    logger.warning("Salesforce CRM update failed for %s: %s", draft["to_email"], exc)
+                    crm_failed.append(f"{draft['to_email']} ({exc})")
         else:
             failed.append(f"{draft['to_email']} ({result})")
 
     summary = ""
     if sent:
         summary += f"✅ **Sent to:** {', '.join(sent)}\n\n"
+    if crm_logged:
+        summary += f"📋 **CRM updated:** {', '.join(crm_logged)}\n\n"
     if failed:
         summary += f"❌ **Failed:** {', '.join(failed)}\n\n"
+    if crm_failed:
+        summary += f"⚠️ **CRM update failed:** {', '.join(crm_failed)}\n\n"
 
+    step_parts = [f"✅ {len(sent)} sent", f"❌ {len(failed)} failed"]
+    if is_salesforce_configured():
+        step_parts.append(f"📋 {len(crm_logged)} CRM logged")
     return {
         "answer": f"{summary}---\n\n{state['answer']}",
-        "steps": [f"Outreach Send → ✅ {len(sent)} sent, ❌ {len(failed)} failed"],
+        "steps": [f"Outreach Send → {', '.join(step_parts)}"],
     }
 
 
