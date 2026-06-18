@@ -10,7 +10,7 @@ Each user request is routed to the correct specialist branch, then processed thr
 - **CRM** branch runs Salesforce operations (query/list leads, aggregates, record DML, describe objects)
 - Full observability with Galileo tracing/session support (optional)
 
-Project explainer page (GitHub Pages): [Technical Understanding Blog](https://ritvik777.github.io/AI-Market/)
+Project docs (GitHub Pages): [TradeFlow Agent walkthrough](https://ritvik777.github.io/TradeflowCRM/)
 
 ---
 
@@ -300,4 +300,4 @@ In GitHub settings:
 
 Then open:
 
-- `https://ritvik777.github.io/AI-Market/`
+- `https://ritvik777.github.io/TradeflowCRM/`

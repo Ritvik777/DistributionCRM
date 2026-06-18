@@ -565,7 +565,7 @@ def _render_how_it_works() -> None:
         st.markdown("""
 **TradeFlow Agent** handles part photo identification, catalog lookup, customer emails, and Salesforce CRM in one conversation — from part photo to pipeline.
 
-Upload documents and catalog images from the sidebar to get started.
+[Technical walkthrough](https://ritvik777.github.io/TradeflowCRM/) · Upload documents and catalog images from the sidebar to get started.
 """)
 
 

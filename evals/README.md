@@ -3,7 +3,7 @@
 This folder contains the evaluation harness for **TradeFlow Agent**.
 The system routes each request to **GTM**, **Outreach**, or **CRM** from one entrypoint.
 
-**Click here for Technical Understanding Blog:** [https://ritvik777.github.io/AI-Market/](https://ritvik777.github.io/AI-Market/)
+**Docs (GitHub Pages):** [https://ritvik777.github.io/TradeflowCRM/](https://ritvik777.github.io/TradeflowCRM/)
 
 ## Official links (services used in this project)
 
