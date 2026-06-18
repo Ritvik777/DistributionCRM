@@ -59,12 +59,13 @@ START -> classify
 Defined in `agents/state.py`:
 
 - `question`
-- `agent_type`
+- `chat_history` (recent turns for multi-turn context)
+- `agent_type` (`gtm` / `outreach` / `crm`)
 - `context`
 - `answer`
 - `is_pricing`
 - `user_email`
-- `send_requested`
+- `send_intent` / `send_requested` / `send_confirmed` (send detection vs UI-confirmed send)
 - `steps` (merged pipeline trace)
 
 ---
@@ -121,7 +122,8 @@ evals/run_galileo_evals.py      # baseline evaluation suite
 | LLM | Anthropic (`ChatAnthropic`) |
 | Embeddings | Qdrant Cloud Inference (`all-MiniLM-L6-v2` dense + BM25 sparse) |
 | Vector DB | Qdrant Cloud |
-| Web Search | DuckDuckGo |
+| Web Search | DuckDuckGo (`ddgs`) |
+| CRM | Salesforce (via TypeScript MCP server; `simple-salesforce` fallback) |
 | Leads | Apollo API |
 | Email | Brevo |
 | UI | Streamlit |
@@ -175,7 +177,7 @@ Required Galileo env vars are in `.env.example`:
 | Apollo API | [apollo.io](https://www.apollo.io/) |
 | Brevo | [brevo.com](https://www.brevo.com/) |
 | Salesforce MCP (Cursor/Claude) | [mcp-server-salesforce](https://github.com/Ritvik777/mcp-server-salesforce) |
-| DuckDuckGo Search package | [duckduckgo-search on PyPI](https://pypi.org/project/duckduckgo-search/) |
+| DuckDuckGo Search package | [ddgs on PyPI](https://pypi.org/project/ddgs/) |
 
 ## Setup and run
 

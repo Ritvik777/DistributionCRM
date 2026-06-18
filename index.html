@@ -416,15 +416,16 @@
       <h1>Product Marketing — Multi-Agent RAG with Observations & Evals</h1>
       <p class="lead">A professional, plain-English walkthrough of your real multi-agent codebase: framework choices, node-level graph flow, state behavior, tool usage, observability, and evaluation pipeline.</p>
       <p class="hero-intro">
-        This multi-agent system is built to handle two real business workflows in one place: <strong>GTM product assistance</strong> and <strong>outreach content execution</strong>.
+        This multi-agent system handles three real business workflows in one place: <strong>GTM product assistance</strong>, <strong>outreach content execution</strong>, and <strong>Salesforce CRM operations</strong>.
         It works by first routing each user request to the right specialist branch, then running branch-specific nodes that gather context, apply business gates (like pricing email verification or send approval), and return a final answer.
         Every step is traced with Galileo so you can inspect exactly what happened and evaluate quality over time.
       </p>
       <div class="chip-row">
         <span class="chip">LangGraph</span>
-        <span class="chip">Supervisor Routing Agent + GTM + Outreach</span>
+        <span class="chip">Router + GTM + Outreach + CRM</span>
         <span class="chip">Qdrant Cloud Inference</span>
         <span class="chip">Anthropic LLM</span>
+        <span class="chip">Salesforce MCP</span>
         <span class="chip">Galileo Tracing + Evals</span>
       </div>
     </section>
@@ -440,19 +441,20 @@
     </nav>
 
     <section class="kpi-grid" aria-label="stats">
-      <article class="kpi"><strong>3</strong><span>Agent roles</span></article>
-      <article class="kpi"><strong>9</strong><span>LangGraph nodes</span></article>
-      <article class="kpi"><strong>4</strong><span>Core tools</span></article>
+      <article class="kpi"><strong>4</strong><span>Agent roles</span></article>
+      <article class="kpi"><strong>11</strong><span>LangGraph nodes</span></article>
+      <article class="kpi"><strong>14</strong><span>Tools</span></article>
       <article class="kpi"><strong>10</strong><span>Eval prompts</span></article>
     </section>
 
     <section class="section">
       <h2>Step 1: Architecture Overview</h2>
-      <p>The assistant behaves like a small team with one coordinator and two specialists:</p>
+      <p>The assistant behaves like a small team with one coordinator and three specialists:</p>
       <ul>
-        <li><strong>Supervisor Routing Agent:</strong> reads the user request and picks the best branch.</li>
-        <li><strong>GTM Agent:</strong> handles product, features, comparisons, and pricing logic.</li>
-        <li><strong>Outreach Agent:</strong> handles content generation, lead research, and optional email sending.</li>
+        <li><strong>Supervisor Routing Agent:</strong> reads the user request and picks the best branch (keyword fast-path on the current message + an LLM 3-way classifier).</li>
+        <li><strong>GTM Agent:</strong> handles product, features, comparisons, and pricing logic (pricing gated behind email verification).</li>
+        <li><strong>Outreach Agent:</strong> handles content generation, lead research (Apollo or Salesforce), and confirmed email sending — then auto-logs the activity in Salesforce.</li>
+        <li><strong>CRM Agent:</strong> handles all Salesforce work — fetch/list records, SOQL + aggregate queries, record create/update/delete, describe objects, and Apex read/write/execute.</li>
       </ul>
       <p>All branches use one shared state object, so every node updates the same request context consistently.</p>
     </section>
@@ -469,10 +471,13 @@
           <tr><td><span class="mono">agents/__init__.py</span></td><td>Main runtime API (`ask`), `get_graph_image()` (PNG), `get_graph_ascii()` (fallback when PNG fails).</td></tr>
           <tr><td><span class="mono">agents/graph.py</span></td><td>Defines LangGraph nodes and all edges/conditional routes.</td></tr>
           <tr><td><span class="mono">agents/state.py</span></td><td>Shared `AgentState` schema and `steps` merge behavior across nodes.</td></tr>
-          <tr><td><span class="mono">agents/router_agent/nodes.py</span></td><td>Intent classification (`gtm` vs `outreach`) using LLM.</td></tr>
+          <tr><td><span class="mono">agents/router_agent/nodes.py</span></td><td>Intent classification (`gtm` / `outreach` / `crm`) — keyword fast-path + LLM 3-way classifier with overrides.</td></tr>
           <tr><td><span class="mono">agents/gtm_agent/nodes.py</span></td><td>GTM branch: retrieve context, pricing gate, email gate, final GTM generation.</td></tr>
-          <tr><td><span class="mono">agents/outreach_agent/nodes.py</span></td><td>Outreach branch: research, draft generation, send gate, optional Brevo send.</td></tr>
-          <tr><td><span class="mono">agents/tools.py</span></td><td>All 4 tools: <span class="mono">search_knowledge_base</span> (Qdrant), <span class="mono">web_search</span> (DuckDuckGo), <span class="mono">apollo_search</span> (Apollo), <span class="mono">send_email</span> (Brevo) + tool-calling loop.</td></tr>
+          <tr><td><span class="mono">agents/outreach_agent/nodes.py</span></td><td>Outreach branch: research (Apollo or Salesforce leads), draft generation, send gate, confirmed Brevo send + CRM activity logging.</td></tr>
+          <tr><td><span class="mono">agents/crm_agent/nodes.py</span></td><td>CRM branch: <span class="mono">crm_research</span> (Salesforce tool loop / fast-path leads table) and <span class="mono">crm_generate</span>.</td></tr>
+          <tr><td><span class="mono">agents/tools/</span></td><td>Tools split by concern: <span class="mono">knowledge_base</span> (Qdrant), <span class="mono">web</span> (DuckDuckGo/ddgs), <span class="mono">apollo</span> (Apollo), <span class="mono">salesforce</span> (query/dml/aggregate/describe/apex), <span class="mono">email</span> (Brevo), and <span class="mono">runner</span> (tool-calling loop).</td></tr>
+          <tr><td><span class="mono">services/salesforce_client.py</span></td><td>CRM operations behind two backend primitives (MCP server or simple-salesforce), with session auto-recovery.</td></tr>
+          <tr><td><span class="mono">services/salesforce_mcp.py</span></td><td>Python MCP client that spawns the TypeScript Salesforce MCP server over stdio.</td></tr>
           <tr><td><span class="mono">vector_db/database.py</span></td><td>Qdrant client setup, collection validation, add/search/count methods.</td></tr>
           <tr><td><span class="mono">vector_db/chunker.py</span></td><td>Text chunking and PDF/Excel/CSV extraction for indexing documents.</td></tr>
           <tr><td><span class="mono">llm.py</span></td><td>Anthropic LLM loader with config/env validation.</td></tr>
@@ -491,18 +496,19 @@
 
       <div class="code-section">
         <h3 class="file-label">agents/graph.py — LangGraph wiring</h3>
-        <p class="snippet-note">Registers nodes and conditional routes between GTM and outreach pipelines.</p>
+        <p class="snippet-note">Registers nodes and conditional routes between the GTM, outreach, and CRM pipelines.</p>
         <pre class="code-snippet">def build_graph():
     g = StateGraph(AgentState)
     g.add_node("classify", classify)
-    g.add_node("gtm_retrieve", gtm_retrieve)
-    # ... pricing_gate, collect_email, gtm_generate,
-    # ... outreach_research, outreach_generate, send_gate, outreach_send
+    # gtm: gtm_retrieve, pricing_gate, collect_email, gtm_generate
+    # outreach: outreach_research, outreach_generate, send_gate, outreach_send
+    # crm: crm_research, crm_generate
 
     g.add_edge(START, "classify")
     g.add_conditional_edges("classify", route, {
         "gtm": "gtm_retrieve",
         "outreach": "outreach_research",
+        "crm": "crm_research",
     })
 
     g.add_edge("gtm_retrieve", "pricing_gate")
@@ -524,6 +530,9 @@
     })
     g.add_edge("outreach_send", END)
 
+    g.add_edge("crm_research", "crm_generate")
+    g.add_edge("crm_generate", END)
+
     return g.compile()</pre>
 
         <h3 class="file-label">agents/state.py — shared state + step merge</h3>
@@ -532,12 +541,15 @@
 
 class AgentState(TypedDict):
     question: str
+    chat_history: list[dict]
     agent_type: str
     context: str
     answer: str
     is_pricing: bool
     user_email: str
+    send_intent: bool
     send_requested: bool
+    send_confirmed: bool
     steps: Annotated[list[str], _merge]</pre>
 
         <h3 class="file-label">agents/__init__.py — single entry <span class="mono">ask()</span> + Galileo trace</h3>
@@ -560,8 +572,16 @@ class AgentState(TypedDict):
 
         <h3 class="file-label">agents/router_agent/nodes.py — supervisor routing</h3>
         <pre class="code-snippet">def classify(state: AgentState, ...) -&gt; dict:
-    # LLM: one word gtm or outreach (prompt encodes product vs content-intent rules)
-    # ...
+    question = state["question"]
+    # 1) keyword fast-path on the CURRENT message (CRM vs outreach send)
+    if is_crm_request(question):
+        return {"agent_type": "crm", ...}
+    # 2) LLM 3-way classifier: gtm / outreach / crm
+    decision = invoke_structured(RouteDecision, llm, prompt, ...)
+    agent = decision.agent_type if decision else "gtm"
+    # 3) overrides: CRM-only ↔ send/email intent wins for outreach
+    if agent != "crm" and is_crm_request(question): agent = "crm"
+    elif agent == "crm" and is_outreach_request(question): agent = "outreach"
     return {"agent_type": agent, "steps": [f"Supervisor Routing Agent → {agent.upper()}"]}
 
 def route(state: AgentState, ...) -&gt; str:
@@ -585,16 +605,20 @@ def route_pricing(state: AgentState, ...) -&gt; str:
 def route_send(state: AgentState, ...) -&gt; str:
     return "send" if state.get("send_requested") else "review"</pre>
 
-        <h3 class="file-label">agents/tools.py — RAG + web tools</h3>
+        <h3 class="file-label">agents/tools/ — RAG, web, CRM tools (one file per concern)</h3>
         <pre class="code-snippet">@tool
 def search_knowledge_base(query: str) -&gt; str:
     """Search internal product docs stored in Qdrant."""
-    results = search_with_scores(query, top_k=4)
+    results = search_with_scores(query, top_k=8)
     # ...
 
 @tool
-def web_search(query: str) -&gt; str:
-    """Search the live web via DuckDuckGo."""</pre>
+def salesforce_query_records(object_name, fields, where_clause="", ...) -&gt; str:
+    """Query Salesforce records (MCP server, or simple-salesforce fallback)."""
+
+@tool
+def salesforce_write_apex(operation, class_name, body, ...) -&gt; str:
+    """Create or update an Apex class via the MCP server."""</pre>
 
         <h3 class="file-label">vector_db/database.py — retrieval</h3>
         <pre class="code-snippet">def search_with_scores(query: str, top_k: int = 4) -&gt; list[tuple[str, float]]:
@@ -690,8 +714,9 @@ def get_llm(temperature=0.7):
           <tr><td>Generation LLM</td><td><span class="mono">ChatAnthropic</span></td><td>Used in supervisor routing, gates, and generation nodes via <span class="mono">llm.py</span>.</td></tr>
           <tr><td>Embeddings</td><td><span class="mono">Qdrant Cloud Inference</span></td><td>Server-side hybrid dense (<span class="mono">all-MiniLM-L6-v2</span>) + sparse (BM25) vectors — no separate embedding API key.</td></tr>
           <tr><td>Vector Store</td><td><span class="mono">Qdrant Cloud</span></td><td>Stores chunks and returns similarity-scored context for tool calls.</td></tr>
-          <tr><td>Web Research</td><td><span class="mono">DuckDuckGo</span></td><td><code>web_search</code> — live web for market/competitor context.</td></tr>
+          <tr><td>Web Research</td><td><span class="mono">DuckDuckGo (ddgs)</span></td><td><code>web_search</code> — live web for market/competitor context.</td></tr>
           <tr><td>Leads + Email</td><td><span class="mono">Apollo</span> + <span class="mono">Brevo</span></td><td><code>apollo_search</code> (leads by job/industry), <code>send_email</code> (outreach send path).</td></tr>
+          <tr><td>CRM</td><td><span class="mono">Salesforce</span> via <span class="mono">MCP</span></td><td>TypeScript <a href="https://github.com/Ritvik777/mcp-server-salesforce">mcp-server-salesforce</a> over stdio (simple-salesforce fallback) for CRM reads, DML, and Apex.</td></tr>
           <tr><td>Observability</td><td><span class="mono">Galileo</span></td><td>Spans, traces, sessions, and experiment logging.</td></tr>
           <tr><td>UI</td><td><span class="mono">Streamlit</span></td><td>Chat UX, graph preview (PNG with ASCII/Mermaid fallback), upload flow, and step trace display.</td></tr>
         </tbody>
@@ -709,9 +734,10 @@ def get_llm(temperature=0.7):
         <button data-mode="all">Show full flow</button>
         <button data-mode="gtm">Highlight GTM path</button>
         <button data-mode="outreach">Highlight Outreach path</button>
+        <button data-mode="crm">Highlight CRM path</button>
       </div>
       <div class="graph-wrap">
-        <svg viewBox="0 0 1200 500" role="img" aria-label="LangGraph routing diagram">
+        <svg viewBox="0 0 1200 520" role="img" aria-label="LangGraph routing diagram">
           <defs>
             <marker id="arrow-green" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
               <path d="M0,0 L10,4 L0,8 z" fill="#63f09a"></path>
@@ -731,6 +757,8 @@ def get_llm(temperature=0.7):
           <g id="n-out-gen" class="node"><rect x="590" y="322" width="190" height="56"></rect><text x="685" y="350">outreach_generate</text></g>
           <g id="n-send-gate" class="node"><rect x="820" y="322" width="140" height="56"></rect><text x="890" y="350">send_gate</text></g>
           <g id="n-send" class="node"><rect x="995" y="322" width="140" height="56"></rect><text x="1065" y="350">outreach_send</text></g>
+          <g id="n-crm-research" class="node"><rect x="360" y="432" width="190" height="56"></rect><text x="455" y="460">crm_research</text></g>
+          <g id="n-crm-gen" class="node"><rect x="590" y="432" width="190" height="56"></rect><text x="685" y="460">crm_generate</text></g>
           <g id="n-end" class="node"><rect x="1128" y="200" width="70" height="56"></rect><text x="1163" y="228">END</text></g>
 
           <path id="e-start-classify" class="edge-always" d="M134 228 L174 228"></path>
@@ -747,9 +775,13 @@ def get_llm(temperature=0.7):
           <path id="e-sendgate-send" class="edge-branch edge-outreach" d="M960 350 L995 350"></path>
           <path id="e-sendgate-end" class="edge-branch edge-outreach" d="M890 322 C900 255, 1088 232, 1128 228"></path>
           <path id="e-send-end" class="edge-always edge-outreach" d="M1135 350 C1160 350, 1160 265, 1160 256"></path>
+          <path id="e-classify-crm" class="edge-branch edge-crm" d="M280 256 C300 360, 330 410, 360 460"></path>
+          <path id="e-crm-research-gen" class="edge-always edge-crm" d="M550 460 L590 460"></path>
+          <path id="e-crm-gen-end" class="edge-branch edge-crm" d="M780 460 C980 460, 1110 300, 1150 256"></path>
 
           <text class="edge-label" x="332" y="184">gtm</text>
           <text class="edge-label" x="334" y="315">outreach</text>
+          <text class="edge-label" x="300" y="392">crm</text>
           <text class="edge-label" x="764" y="64">not_pricing</text>
           <text class="edge-label" x="731" y="136">pricing</text>
           <text class="edge-label" x="908" y="102">valid</text>
@@ -769,12 +801,13 @@ def get_llm(temperature=0.7):
         </thead>
         <tbody>
           <tr><td><span class="mono">question</span></td><td><span class="mono">ask()</span></td><td>Original user request</td><td>"What does this product cost?"</td></tr>
-          <tr><td><span class="mono">agent_type</span></td><td><span class="mono">classify</span></td><td>Branch selector</td><td><span class="mono">gtm</span> or <span class="mono">outreach</span></td></tr>
-          <tr><td><span class="mono">context</span></td><td><span class="mono">gtm_retrieve</span> / <span class="mono">outreach_research</span></td><td>Tool-generated evidence context</td><td>KB snippets, web notes, leads</td></tr>
+          <tr><td><span class="mono">chat_history</span></td><td><span class="mono">ask()</span> (from UI)</td><td>Recent turns for multi-turn context</td><td>list of role/content messages</td></tr>
+          <tr><td><span class="mono">agent_type</span></td><td><span class="mono">classify</span></td><td>Branch selector</td><td><span class="mono">gtm</span> / <span class="mono">outreach</span> / <span class="mono">crm</span></td></tr>
+          <tr><td><span class="mono">context</span></td><td><span class="mono">gtm_retrieve</span> / <span class="mono">outreach_research</span> / <span class="mono">crm_research</span></td><td>Tool-generated evidence context</td><td>KB snippets, web notes, leads, CRM rows</td></tr>
           <tr><td><span class="mono">is_pricing</span></td><td><span class="mono">pricing_gate</span></td><td>Controls pricing branch behavior</td><td><span class="mono">true</span> / <span class="mono">false</span></td></tr>
           <tr><td><span class="mono">user_email</span></td><td><span class="mono">collect_email</span></td><td>Required for gated pricing output</td><td><span class="mono">ritvik@dauji.ai</span></td></tr>
-          <tr><td><span class="mono">send_requested</span></td><td><span class="mono">send_gate</span></td><td>Controls send vs review routing</td><td><span class="mono">true</span> / <span class="mono">false</span></td></tr>
-          <tr><td><span class="mono">answer</span></td><td><span class="mono">gtm_generate</span> / <span class="mono">outreach_generate</span> / <span class="mono">outreach_send</span></td><td>Final user-facing response</td><td>Generated answer or send summary</td></tr>
+          <tr><td><span class="mono">send_intent</span> / <span class="mono">send_confirmed</span></td><td><span class="mono">send_gate</span> / UI</td><td>Detect send intent; actual send requires UI confirm</td><td><span class="mono">true</span> / <span class="mono">false</span></td></tr>
+          <tr><td><span class="mono">answer</span></td><td>generate / send nodes</td><td>Final user-facing response</td><td>Generated answer or send summary</td></tr>
           <tr><td><span class="mono">steps</span></td><td>Every node</td><td>Trace log shown in UI and eval parsing</td><td>["Supervisor Routing Agent -> GTM", "..."]</td></tr>
         </tbody>
       </table>
@@ -782,7 +815,7 @@ def get_llm(temperature=0.7):
 
     <section class="section">
       <h2>Step 6: Node-by-Node Execution Framework</h2>
-      <div class="two-col">
+      <div class="three-col">
         <article class="panel panel-gtm">
           <h3>GTM branch logic</h3>
           <ol class="step-list">
@@ -795,24 +828,37 @@ def get_llm(temperature=0.7):
         <article class="panel panel-outreach">
           <h3>Outreach branch logic</h3>
           <ol class="step-list">
-            <li><span class="mono">outreach_research</span> selects Apollo+KB or KB+web tool mix.</li>
-            <li><span class="mono">outreach_generate</span> drafts post/email content.</li>
+            <li><span class="mono">outreach_research</span> sources leads (Apollo or Salesforce) + product context.</li>
+            <li><span class="mono">outreach_generate</span> drafts one email/post per recipient.</li>
             <li><span class="mono">send_gate</span> resolves "send now" vs "review only".</li>
-            <li><span class="mono">outreach_send</span> performs Brevo delivery if approved.</li>
+            <li><span class="mono">outreach_send</span> delivers via Brevo on confirm + logs a Salesforce Task.</li>
+          </ol>
+        </article>
+        <article class="panel" style="border-left:4px solid var(--pink);">
+          <h3>CRM branch logic</h3>
+          <ol class="step-list">
+            <li><span class="mono">crm_research</span> runs the right Salesforce tool (query, aggregate, DML, describe, Apex) — or a fast-path leads table.</li>
+            <li><span class="mono">crm_generate</span> formats results into a clean answer (passthrough for the fast-path).</li>
           </ol>
         </article>
       </div>
     </section>
 
     <section class="section">
-      <h2>Step 6b: All 4 Tools</h2>
+      <h2>Step 6b: Tools</h2>
       <table>
         <thead><tr><th>Tool</th><th>Backend</th><th>Used by</th><th>Purpose</th></tr></thead>
         <tbody>
           <tr><td><span class="mono">search_knowledge_base</span></td><td>Qdrant</td><td>GTM, Outreach</td><td>Product docs from your indexed knowledge base</td></tr>
-          <tr><td><span class="mono">web_search</span></td><td>DuckDuckGo</td><td>GTM, Outreach</td><td>Live web for market/competitor/industry info</td></tr>
-          <tr><td><span class="mono">apollo_search</span></td><td>Apollo.io</td><td>Outreach</td><td>Find leads by job title, location, industry</td></tr>
-          <tr><td><span class="mono">send_email</span></td><td>Brevo</td><td>Outreach</td><td>Deliver personalized emails when user asks to send</td></tr>
+          <tr><td><span class="mono">web_search</span></td><td>DuckDuckGo (ddgs)</td><td>GTM, Outreach</td><td>Live web for market/competitor/industry info</td></tr>
+          <tr><td><span class="mono">apollo_search</span></td><td>Apollo.io</td><td>Outreach</td><td>Find new leads by job title, location, industry</td></tr>
+          <tr><td><span class="mono">send_email</span></td><td>Brevo</td><td>Outreach</td><td>Deliver personalized emails on confirm</td></tr>
+          <tr><td><span class="mono">salesforce_query_records</span></td><td>Salesforce (MCP)</td><td>CRM, Outreach</td><td>SOQL reads of Leads/Contacts/etc.</td></tr>
+          <tr><td><span class="mono">salesforce_aggregate_query</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>GROUP BY / COUNT / SUM aggregate queries</td></tr>
+          <tr><td><span class="mono">salesforce_dml_records</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>Insert / update / delete / upsert records</td></tr>
+          <tr><td><span class="mono">salesforce_search_leads</span> / <span class="mono">salesforce_upsert_lead</span></td><td>Salesforce</td><td>CRM, Outreach</td><td>Lookup + create/update leads</td></tr>
+          <tr><td><span class="mono">salesforce_describe_object</span> / <span class="mono">salesforce_search_objects</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>Schema / object discovery</td></tr>
+          <tr><td><span class="mono">salesforce_read_apex</span> / <span class="mono">salesforce_write_apex</span> / <span class="mono">salesforce_execute_anonymous</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>Read, write, and run Apex code</td></tr>
         </tbody>
       </table>
     </section>
@@ -863,7 +909,19 @@ def get_llm(temperature=0.7):
           <h3>Example C - Send request</h3>
           <p><strong>User:</strong> "Send this to ritvik@dauji.ai now."</p>
           <p><strong>Path:</strong> <span class="mono">classify -> outreach_research -> outreach_generate -> send_gate(send) -> outreach_send</span></p>
-          <p><strong>Outcome:</strong> sends via Brevo and returns send status summary.</p>
+          <p><strong>Outcome:</strong> sends via Brevo, logs a Salesforce Task, returns status summary.</p>
+        </article>
+        <article class="panel">
+          <h3>Example D - CRM query</h3>
+          <p><strong>User:</strong> "Count opportunities by stage" / "Fetch the latest leads from Salesforce."</p>
+          <p><strong>Path:</strong> <span class="mono">classify -> crm_research -> crm_generate</span></p>
+          <p><strong>Outcome:</strong> runs the right Salesforce tool (aggregate / query) and returns a formatted table.</p>
+        </article>
+        <article class="panel">
+          <h3>Example E - Cross-agent</h3>
+          <p><strong>User:</strong> "Find leads from Salesforce and email them about LED Red 5mm."</p>
+          <p><strong>Path:</strong> <span class="mono">classify(outreach) -> outreach_research(Salesforce leads) -> outreach_generate -> send_gate(review)</span></p>
+          <p><strong>Outcome:</strong> pulls CRM leads, drafts one email each, holds for confirm.</p>
         </article>
       </div>
     </section>
@@ -880,6 +938,7 @@ def get_llm(temperature=0.7):
           <tr><td>Streamlit</td><td>Application UI and interactive chat view</td><td><a href="https://docs.streamlit.io/">docs.streamlit.io</a></td></tr>
           <tr><td>Apollo</td><td>Lead search and enrichment in outreach flow</td><td><a href="https://www.apollo.io/">apollo.io</a></td></tr>
           <tr><td>Brevo</td><td>Email delivery for approved send actions</td><td><a href="https://www.brevo.com/">brevo.com</a></td></tr>
+          <tr><td>Salesforce MCP</td><td>CRM reads, DML, and Apex via the TypeScript MCP server (also used in Cursor)</td><td><a href="https://github.com/Ritvik777/mcp-server-salesforce">mcp-server-salesforce</a></td></tr>
         </tbody>
       </table>
     </section>
@@ -892,12 +951,14 @@ def get_llm(temperature=0.7):
       const nodeIds = [
         "n-start", "n-classify",
         "n-gtm-retrieve", "n-pricing", "n-email", "n-gtm-gen",
-        "n-out-research", "n-out-gen", "n-send-gate", "n-send", "n-end"
+        "n-out-research", "n-out-gen", "n-send-gate", "n-send",
+        "n-crm-research", "n-crm-gen", "n-end"
       ];
       const edgeIds = [
         "e-start-classify",
         "e-classify-gtm", "e-gtm-retrieve-pricing", "e-pricing-gtm-gen", "e-pricing-email", "e-email-gtm-gen", "e-gtm-end", "e-email-end",
-        "e-classify-out", "e-out-research-gen", "e-out-gen-sendgate", "e-sendgate-send", "e-sendgate-end", "e-send-end"
+        "e-classify-out", "e-out-research-gen", "e-out-gen-sendgate", "e-sendgate-send", "e-sendgate-end", "e-send-end",
+        "e-classify-crm", "e-crm-research-gen", "e-crm-gen-end"
       ];
       const gtmEdges = [
         "e-start-classify", "e-classify-gtm", "e-gtm-retrieve-pricing", "e-pricing-email", "e-email-gtm-gen", "e-pricing-gtm-gen", "e-gtm-end", "e-email-end"
@@ -905,8 +966,12 @@ def get_llm(temperature=0.7):
       const outreachEdges = [
         "e-start-classify", "e-classify-out", "e-out-research-gen", "e-out-gen-sendgate", "e-sendgate-send", "e-sendgate-end", "e-send-end"
       ];
+      const crmEdges = [
+        "e-start-classify", "e-classify-crm", "e-crm-research-gen", "e-crm-gen-end"
+      ];
       const gtmNodes = ["n-start", "n-classify", "n-gtm-retrieve", "n-pricing", "n-email", "n-gtm-gen", "n-end"];
       const outNodes = ["n-start", "n-classify", "n-out-research", "n-out-gen", "n-send-gate", "n-send", "n-end"];
+      const crmNodes = ["n-start", "n-classify", "n-crm-research", "n-crm-gen", "n-end"];
 
       function get(id) { return document.getElementById(id); }
       function dimAll() {
@@ -938,6 +1003,12 @@ def get_llm(temperature=0.7):
             outNodes.forEach((id) => get(id).classList.remove("dim"));
             outreachEdges.forEach((id) => get(id).classList.remove("dim"));
             mark(outNodes, outreachEdges);
+            return;
+          }
+          if (mode === "crm") {
+            crmNodes.forEach((id) => get(id).classList.remove("dim"));
+            crmEdges.forEach((id) => get(id).classList.remove("dim"));
+            mark(crmNodes, crmEdges);
           }
         });
       });
