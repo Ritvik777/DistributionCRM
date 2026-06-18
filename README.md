@@ -1,17 +1,16 @@
-# Product Marketing — Multi-Agent RAG with Observations & Evals
+# Product Distribution Agent — Multi-Agent RAG with Observations & Evals
 
-This repository is a **Product Marketing** assistant built with LangGraph.
+This repository is a **Product Distribution Agent** built with LangGraph — a multi-agent assistant for catalog lookup, customer outreach, and Salesforce CRM in one conversation.
 
-This multi-agent system is built for two production workflows in one assistant: **GTM product support** and **outreach content execution**.  
-Each user request is first routed to the correct specialist branch, then processed through branch-specific nodes that gather context, apply business gates (pricing email verification or send intent), and return a final response with full trace visibility.
+Each user request is routed to the correct specialist branch, then processed through branch-specific nodes that gather context, apply business gates (pricing email verification or send intent), and return a final response with full trace visibility.
 
-- Supervisor Routing Agent decides between **GTM**, **Outreach**, and **CRM** behavior
-- GTM branch answers product and pricing questions from your knowledge base
-- Outreach branch creates content, finds new leads, and can send emails
-- CRM branch runs Salesforce operations (query/list leads, aggregates, record DML, describe objects)
+- **Supervisor Routing Agent** decides between **GTM**, **Outreach**, and **CRM**
+- **GTM** branch answers product and pricing questions from your knowledge base; supports **component photo verification** via hybrid CLIP + vision matching
+- **Outreach** branch creates content, finds new leads, and can send emails (with UI confirmation before delivery)
+- **CRM** branch runs Salesforce operations (query/list leads, aggregates, record DML, describe objects)
 - Full observability with Galileo tracing/session support (optional)
 
-Project explainer page (GitHub Pages): [Click here for Technical Understanding Blog](https://ritvik777.github.io/AI-Market/)
+Project explainer page (GitHub Pages): [Technical Understanding Blog](https://ritvik777.github.io/AI-Market/)
 
 ---
 
@@ -31,42 +30,48 @@ START -> classify
           \- crm      -> crm_research -> crm_generate -> END
 ```
 
+> **Send gate:** `send_gate` detects send intent, but actual delivery requires UI confirmation (`send_confirmed=True` via `confirm_send()`). Review-only drafts end at `END`; confirmed sends run `outreach_send`.
+
 ### Agents
 
 - **Supervisor Routing Agent** (`agents/router_agent/nodes.py`)
-  - Uses LLM for intent classification
-  - Routes to `gtm` or `outreach`
+  - Keyword fast-path for outreach, CRM, and image-attached queries
+  - LLM structured routing (`RouteDecision`) as fallback
+  - Routes to `gtm`, `outreach`, or `crm`
 
 - **GTM Agent** (`agents/gtm_agent/nodes.py`)
-  - Retrieves context from internal KB + web
+  - Retrieves context from internal KB + web, or runs **component image match** when a photo is attached
   - Pricing gate requires verified email before full pricing output
-  - Generates final product/pricing response
+  - Generates final product/pricing/catalog response
 
 - **Outreach Agent** (`agents/outreach_agent/nodes.py`)
   - Researches context (Apollo for net-new leads; Salesforce de-dup when configured)
-  - Generates marketing content (email/post)
-  - Send gate determines review-only vs actual send via Brevo
+  - Generates formal B2B marketing content (email/post)
+  - Send gate determines review-only vs send intent; **Brevo delivery** only after UI confirm
   - After a successful send, logs a completed **Task** in Salesforce (creates Lead if needed)
+  - Can attach or inline catalog reference photos in outbound emails
 
 - **CRM Agent** (`agents/crm_agent/nodes.py`)
-  - Owns all Salesforce/CRM operations via your TypeScript MCP server
+  - Owns all Salesforce/CRM operations via TypeScript MCP server (or Python REST fallback)
   - Fetch/list/search records, SOQL + aggregate queries, record create/update/delete/upsert
-  - Describe/search objects
+  - Describe/search objects; part-enquiry search via logged Task records
   - Fast-path Markdown table for simple "latest leads" fetches; LLM tool loop for everything else
 
 ### Shared state
 
 Defined in `agents/state.py`:
 
-- `question`
-- `chat_history` (recent turns for multi-turn context)
-- `agent_type` (`gtm` / `outreach` / `crm`)
-- `context`
-- `answer`
-- `is_pricing`
-- `user_email`
-- `send_intent` / `send_requested` / `send_confirmed` (send detection vs UI-confirmed send)
-- `steps` (merged pipeline trace)
+- `question` — current user message
+- `chat_history` — recent turns for multi-turn context
+- `agent_type` — `gtm` / `outreach` / `crm`
+- `context` — retrieved KB/web/CRM/component data
+- `answer` — final response text
+- `kb_sources` — citation metadata for the UI
+- `query_image_b64` — attached component photo (base64)
+- `component_matches` — hybrid vision match results (SKU, confidence %, caption)
+- `is_pricing` / `user_email` — pricing gate state
+- `send_intent` / `send_requested` / `send_confirmed` — send detection vs UI-confirmed send
+- `steps` — merged pipeline trace (reducer appends across nodes)
 
 ---
 
@@ -74,42 +79,69 @@ Defined in `agents/state.py`:
 
 ```text
 app.py                          # Streamlit entrypoint
-ui/ui.py                        # Sidebar, chat, trace rendering
+ui/ui.py                        # Sidebar, chat, trace rendering, send confirmation
+ui/component_vision.py          # Component match results panel
+agents/__init__.py              # ask(), confirm_send(), Galileo tracing
 agents/graph.py                 # LangGraph node wiring
+agents/intent.py                # Regex intent classifiers (CRM/outreach fast-path)
 agents/router_agent/nodes.py    # classify + route (gtm / outreach / crm)
 agents/gtm_agent/nodes.py       # GTM branch nodes
 agents/outreach_agent/nodes.py  # Outreach branch nodes
 agents/crm_agent/nodes.py       # CRM (Salesforce) branch nodes
-agents/tools/                   # KB/web/Apollo/Brevo/Salesforce tools + tool loop (one file per concern)
-services/salesforce_mcp.py      # Python MCP client → spawns TypeScript MCP server (stdio)
+agents/tools/                   # KB/web/Apollo/Brevo/Salesforce tools + runner loop
+services/agent_service.py       # UI → agents adapter
+services/conversation_service.py # Session state helpers (history, pending drafts)
+services/component_match_service.py # Shared component match formatting
+services/catalog_image_host.py  # Public URLs for inline email images
+services/salesforce_mcp.py      # Python MCP client → TypeScript MCP server (stdio)
 services/salesforce_client.py   # CRM ops (MCP by default, Python REST fallback)
+services/salesforce_repository.py # Lead fetch/format fast-paths
+services/vector_db_service.py   # UI → vector_db adapter
 vector_db/database.py           # Qdrant hybrid search (dense + BM25 via Cloud Inference)
-vector_db/chunker.py            # text/pdf chunking
-observability/galileo.py        # tracing/session setup
-evals/run_galileo_evals.py      # baseline evaluation suite
+vector_db/chunker.py            # Text/PDF/Excel/CSV chunking
+vector_db/component_store.py    # CLIP image catalog + hybrid component matching
+vector_db/vision.py             # Claude vision captioning and re-ranking
+observability/galileo.py        # Tracing/session setup
+evals/run_galileo_evals.py      # Baseline evaluation suite
 ```
 
 ### File-by-file map (detailed)
 
 | File | What it does |
 |---|---|
-| `app.py` | Main Streamlit entrypoint that initializes app shell and chat loop. |
-| `ui/ui.py` | UI logic: styling, sidebar blocks, upload handlers, chat rendering, and trace display. |
-| `services/agent_service.py` | Service adapter for `ask()`, `load_graph_image()` (PNG), and `load_graph_ascii()` (fallback when PNG fails). |
-| `services/vector_db_service.py` | Service adapter for adding docs/PDFs and reading DB counts. |
-| `agents/__init__.py` | Runtime `ask()` entrypoint, `get_graph_image()` (PNG), `get_graph_ascii()` (fallback for UI graph). |
+| `app.py` | Main Streamlit entrypoint: session init, chat loop, composer with image attach. |
+| `config.py` | Global config/env loading (Qdrant, Anthropic, Brevo, Apollo, Salesforce, vision). |
+| `llm.py` | Anthropic model factory (`get_llm`, vision caption/rerank variants). |
+| `ui/ui.py` | UI logic: styling, sidebar uploads, chat rendering, trace display, send confirmation. |
+| `ui/component_vision.py` | Renders component catalog match panel (confidence, SKU, thumbnail). |
+| `services/agent_service.py` | Service adapter for `ask_agent()`, `confirm_send_email()`, graph image/ASCII. |
+| `services/vector_db_service.py` | Service adapter for docs/PDFs/Excel/CSV and component image catalog. |
+| `services/conversation_service.py` | Chat history, pricing-email follow-up, pending draft/send state. |
+| `services/component_match_service.py` | Formats hybrid match context for GTM/outreach nodes. |
+| `services/catalog_image_host.py` | Hosts catalog images for inline `<img>` in Brevo emails. |
+| `services/salesforce_client.py` | Backend-agnostic CRM ops (MCP or `simple-salesforce` REST). |
+| `services/salesforce_mcp.py` | Spawns TypeScript MCP server over stdio; parses query results. |
+| `services/salesforce_repository.py` | Lead fetch/format fast-paths (latest, time window, part enquiry). |
+| `agents/__init__.py` | Runtime `ask()` / `confirm_send()` entrypoints + Galileo top-level traces. |
 | `agents/graph.py` | LangGraph wiring for nodes and conditional routing. |
-| `agents/state.py` | Shared `AgentState` schema and merged `steps` reducer behavior. |
-| `agents/router_agent/nodes.py` | Supervisor Routing Agent classification logic (`gtm` vs `outreach`) using LLM. |
-| `agents/gtm_agent/nodes.py` | GTM branch nodes: retrieve, pricing/email gates, and GTM answer generation. |
-| `agents/outreach_agent/nodes.py` | Outreach branch nodes: research, draft generation, send gate, send execution. |
-| `agents/tools/` | Shared tools split by concern (`knowledge_base`, `web`, `apollo`, `salesforce`, `email`) plus the `runner` tool-routing loop. |
-| `vector_db/database.py` | Qdrant setup, hybrid search (dense + BM25), add/count operations. |
-| `vector_db/chunker.py` | Text chunking and PDF/Excel/CSV extraction utilities. |
-| `llm.py` | Anthropic model factory and env validation. |
-| `config.py` | Global config/env variable loading. |
-| `observability/galileo.py` | Galileo SDK integration for spans, callbacks, traces, sessions, and console links. |
-| `evals/run_galileo_evals.py` | Eval runner (sessions mode + experiment mode + tool coverage checks). |
+| `agents/state.py` | Shared `AgentState` schema and merged `steps` reducer. |
+| `agents/chat.py` | `build_turn_context()` — formats history + current message for prompts. |
+| `agents/intent.py` | Regex classifiers: CRM/outreach detection, leads fast-path eligibility. |
+| `agents/schemas.py` | Pydantic models for structured LLM decisions (route, pricing, send, leads gates). |
+| `agents/structured.py` | `invoke_structured()` helper with fallback on parse failure. |
+| `agents/constants.py` | Shared regex (`EMAIL_PATTERN`), send phrases, history limit. |
+| `agents/router_agent/nodes.py` | Supervisor classification (`gtm` / `outreach` / `crm`). |
+| `agents/gtm_agent/nodes.py` | GTM nodes: retrieve, pricing/email gates, answer generation. |
+| `agents/outreach_agent/nodes.py` | Outreach nodes: research, draft, send gate, Brevo send + CRM log. |
+| `agents/outreach_agent/email_html.py` | Formal HTML email template with optional catalog inline image. |
+| `agents/crm_agent/nodes.py` | CRM nodes: fast-path lead fetch, tool loop, answer formatting. |
+| `agents/tools/` | Tools by concern (`knowledge_base`, `web`, `apollo`, `salesforce`, `email`) + `runner`. |
+| `vector_db/database.py` | Qdrant setup, hybrid search (dense + BM25), add/count/source management. |
+| `vector_db/chunker.py` | Text chunking and PDF/Excel/CSV extraction. |
+| `vector_db/component_store.py` | CLIP embeddings + Claude captions; hybrid component image matching. |
+| `vector_db/vision.py` | Claude vision for query captioning and CLIP candidate re-ranking. |
+| `observability/galileo.py` | Galileo SDK: spans, callbacks, traces, sessions, console links. |
+| `evals/run_galileo_evals.py` | Eval runner (sessions mode + experiment mode). |
 | `evals/README.md` | Evaluation guide and Galileo eval usage details. |
 
 ---
@@ -121,9 +153,10 @@ evals/run_galileo_evals.py      # baseline evaluation suite
 | Orchestration | LangGraph |
 | LLM | Anthropic (`ChatAnthropic`) |
 | Embeddings | Qdrant Cloud Inference (`all-MiniLM-L6-v2` dense + BM25 sparse) |
+| Component vision | CLIP (`sentence-transformers`) + Claude vision re-rank |
 | Vector DB | Qdrant Cloud |
 | Web Search | DuckDuckGo (`ddgs`) |
-| CRM | Salesforce (via TypeScript MCP server; `simple-salesforce` fallback) |
+| CRM | Salesforce (TypeScript MCP server; `simple-salesforce` fallback) |
 | Leads | Apollo API |
 | Email | Brevo |
 | UI | Streamlit |
@@ -138,6 +171,7 @@ Galileo integration in this repo is centralized and explicit:
 - **Core helper layer:** `observability/galileo.py`
   - `ensure_galileo_initialized()` calls `galileo_context.init(...)`
   - `get_langchain_config(...)` injects `GalileoCallback` into LLM/tool invokes
+  - `merge_node_config(...)` preserves span nesting across graph nodes
   - `log_span(...)` wraps functions with Galileo span decorators
   - `start_chat_session(...)` starts per-chat Galileo sessions
   - `get_logger_instance()` returns the active logger for trace/session operations
@@ -147,9 +181,9 @@ Galileo integration in this repo is centralized and explicit:
   - Starts top trace with `logger.start_trace(...)`
   - Concludes and flushes with `logger.conclude(...)` + `logger.flush()`
 
-- **Node + tool tracing:** `agents/router_agent/nodes.py`, `agents/gtm_agent/nodes.py`, `agents/outreach_agent/nodes.py`, `agents/tools.py`
+- **Node + tool tracing:** `agents/router_agent/nodes.py`, `agents/gtm_agent/nodes.py`, `agents/outreach_agent/nodes.py`, `agents/crm_agent/nodes.py`, `agents/tools/runner.py`
   - LLM/tool calls pass `merge_node_config(...)` so `GalileoCallback` captures spans
-  - `send_email` also uses `@log_span(...)`; `call_tools` intentionally does not (avoids duplicate spans with retrieve nodes)
+  - `deliver_brevo_email` uses `@log_span(...)`; `call_tools` intentionally does not (avoids duplicate spans with retrieve nodes)
 
 - **UI session wiring:** `ui/ui.py`
   - `handle_new_prompt(...)` starts one Galileo session per fresh chat via `start_chat_session(...)`
@@ -161,9 +195,12 @@ Galileo integration in this repo is centralized and explicit:
   - Uses same `ask()` path, so eval and production routing logic stay aligned
 
 Required Galileo env vars are in `.env.example`:
+
 - `GALILEO_API_KEY`
 - `GALILEO_PROJECT`
 - `GALILEO_LOG_STREAM`
+
+---
 
 ## Official links for all core services
 
@@ -179,6 +216,8 @@ Required Galileo env vars are in `.env.example`:
 | Salesforce MCP (Cursor/Claude) | [mcp-server-salesforce](https://github.com/Ritvik777/mcp-server-salesforce) |
 | DuckDuckGo Search package | [ddgs on PyPI](https://pypi.org/project/ddgs/) |
 
+---
+
 ## Setup and run
 
 ### 1) Install dependencies
@@ -187,7 +226,7 @@ Required Galileo env vars are in `.env.example`:
 pip install -r requirements.txt
 ```
 
-> **Note:** `grandalf` (in requirements) enables ASCII graph fallback in the Streamlit sidebar when PNG rendering (Mermaid.INK API) is unavailable.
+> **Note:** `grandalf` (in requirements) enables ASCII graph fallback in the Streamlit sidebar when PNG rendering is unavailable. `sentence-transformers` + `torch` + `pillow` are required for component image matching (CLIP).
 
 ### 2) Configure environment
 
@@ -197,21 +236,28 @@ cp .env.example .env
 
 Fill `.env` with your values:
 
-- Core:
+- **Core:**
   - `ANTHROPIC_API_KEY`
   - `QDRANT_URL`
   - `QDRANT_API_KEY`
-- Optional outreach features:
+  - `ANTHROPIC_MODEL` (optional, default `claude-haiku-4-5`)
+- **Component vision (optional):**
+  - `VISION_MODEL`, `VISION_CAPTION_MODEL`, `VISION_RERANK_MODEL` — Claude models for caption/re-rank
+  - `CLIP_MODEL_NAME` (default `clip-ViT-B-32`)
+  - `COMPONENT_COLLECTION_NAME`, `COMPONENT_RERANK_POOL`, `COMPONENT_CLIP_CANDIDATES`
+  - `COMPONENT_IMAGE_PUBLIC_BASE_URL` — CDN base for inline email images
+  - `CATALOG_IMAGE_TEMP_UPLOAD` — auto-upload to catbox.moe for Brevo inline `<img>` (default `true`)
+- **Outreach (optional):**
   - `APOLLO_API_KEY`
   - `BREVO_API_KEY`
   - `BREVO_FROM_EMAIL`
   - `BREVO_FROM_NAME` (optional)
-- Optional Salesforce CRM via your [TypeScript MCP server](https://github.com/Ritvik777/mcp-server-salesforce):
+- **Salesforce CRM** via [TypeScript MCP server](https://github.com/Ritvik777/mcp-server-salesforce):
   - `SALESFORCE_BACKEND=mcp` (default when Node/npx is installed) spawns `@ritvik777/mcp-server-salesforce` over stdio
   - `SALESFORCE_BACKEND=python` uses `simple-salesforce` REST (no Node required)
   - `SALESFORCE_MCP_COMMAND` / `SALESFORCE_MCP_ARGS` — same as Claude Desktop MCP config
   - Auth: `SALESFORCE_CONNECTION_TYPE` + username/password, OAuth, or `Salesforce_CLI` (MCP only)
-- Observability/evals:
+- **Observability/evals:**
   - `GALILEO_API_KEY`
   - `GALILEO_PROJECT`
   - `GALILEO_LOG_STREAM`
@@ -244,7 +290,7 @@ See full eval documentation in `evals/README.md`.
 
 ## GitHub Pages (branch deploy)
 
-This repo uses root `index.html` for docs page.
+This repo uses root `index.html` for the docs page.
 
 In GitHub settings:
 
