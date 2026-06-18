@@ -8,7 +8,7 @@ Each user request is first routed to the correct specialist branch, then process
 - Supervisor Routing Agent decides between **GTM**, **Outreach**, and **CRM** behavior
 - GTM branch answers product and pricing questions from your knowledge base
 - Outreach branch creates content, finds new leads, and can send emails
-- CRM branch runs all Salesforce operations (query/list leads, aggregates, record DML, Apex)
+- CRM branch runs Salesforce operations (query/list leads, aggregates, record DML, describe objects)
 - Full observability with Galileo tracing/session support (optional)
 
 Project explainer page (GitHub Pages): [Click here for Technical Understanding Blog](https://ritvik777.github.io/AI-Market/)
@@ -51,7 +51,7 @@ START -> classify
 - **CRM Agent** (`agents/crm_agent/nodes.py`)
   - Owns all Salesforce/CRM operations via your TypeScript MCP server
   - Fetch/list/search records, SOQL + aggregate queries, record create/update/delete/upsert
-  - Describe/search objects; read, write, and execute Apex
+  - Describe/search objects
   - Fast-path Markdown table for simple "latest leads" fetches; LLM tool loop for everything else
 
 ### Shared state

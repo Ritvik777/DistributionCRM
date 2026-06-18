@@ -33,10 +33,9 @@ RULES — Route to CRM for (anything operating on Salesforce/CRM data or code):
 - SOQL queries, aggregate/GROUP BY queries (count opportunities by stage, etc.)
 - Create / update / delete CRM records; upsert leads; log CRM activity
 - Describe objects/fields, search objects, inspect schema
-- Read, write, or execute Apex code (classes, triggers, anonymous Apex)
 
 IMPORTANT: 'email X about product Y' or 'market product Y to X@email.com' → outreach (not gtm).
-IMPORTANT: 'fetch leads from Salesforce', 'show CRM contacts', 'count opportunities by stage', 'write an Apex class' → crm.
+IMPORTANT: 'fetch leads from Salesforce', 'show CRM contacts', 'count opportunities by stage' → crm.
 IMPORTANT: 'find VP Sales leads in fintech to email' → outreach (net-new prospecting + send), NOT crm.
 
 If unrelated to product marketing, route gtm.
@@ -48,7 +47,6 @@ Examples:
 - 'Fetch latest leads from Salesforce' → crm
 - 'Show me contacts in CRM for Acme Corp' → crm
 - 'Count opportunities by stage' → crm
-- 'Write an Apex class that recalculates account revenue' → crm
 - 'Update the status of lead 00Q... to Working' → crm
 """
 

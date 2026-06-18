@@ -11,7 +11,7 @@ agents/ — The multi-agent system
   router_agent/         → 🚦 Supervisor Routing Agent (picks which agent handles it)
   gtm_agent/            → 🎯 GTM Agent (product questions + pricing gate)
   outreach_agent/       → 📝 Outreach Agent (content creation + sending)
-  crm_agent/            → 🗂️ CRM Agent (Salesforce reads, DML, aggregates, Apex)
+  crm_agent/            → 🗂️ CRM Agent (Salesforce reads, DML, aggregates, schema)
 """
 
 from agents.graph import graph

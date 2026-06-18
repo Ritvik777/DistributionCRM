@@ -9,7 +9,7 @@ class RouteDecision(BaseModel):
             "gtm for product/pricing research; "
             "outreach for writing/sending emails, content, or finding NEW prospects; "
             "crm for Salesforce operations: fetch/list leads or contacts, SOQL/aggregate "
-            "queries, record create/update/delete, describe objects, and Apex read/write/execute"
+            "queries, record create/update/delete, and describe objects"
         )
     )
 

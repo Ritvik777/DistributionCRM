@@ -20,9 +20,6 @@ from agents.tools.salesforce import (
     salesforce_aggregate_query,
     salesforce_search_objects,
     salesforce_describe_object,
-    salesforce_read_apex,
-    salesforce_write_apex,
-    salesforce_execute_anonymous,
 )
 from agents.tools.email import send_email
 from agents.tools.runner import call_tools
@@ -38,9 +35,6 @@ __all__ = [
     "salesforce_aggregate_query",
     "salesforce_search_objects",
     "salesforce_describe_object",
-    "salesforce_read_apex",
-    "salesforce_write_apex",
-    "salesforce_execute_anonymous",
     "send_email",
     "call_tools",
 ]

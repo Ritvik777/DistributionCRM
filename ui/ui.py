@@ -373,8 +373,7 @@ def _render_how_it_works() -> None:
 - SOQL + aggregate (GROUP BY / COUNT) queries
 - Create / update / delete records; upsert leads
 - Describe objects, search objects
-- Read / write / execute **Apex** (via your TypeScript MCP server)
-- Uses: `salesforce_query_records`, `salesforce_aggregate_query`, `salesforce_dml_records`, `salesforce_describe_object`, `salesforce_read_apex`, `salesforce_write_apex`, `salesforce_execute_anonymous`
+- Uses: `salesforce_query_records`, `salesforce_aggregate_query`, `salesforce_dml_records`, `salesforce_search_leads`, `salesforce_upsert_lead`, `salesforce_describe_object`
 """)
 
 

@@ -379,34 +379,6 @@
     .anchor-target { scroll-margin-top: 88px; }
     a { color: #a7bdfd; }
 
-    .code-section { margin-top: 8px; }
-    .code-section h3.file-label {
-      font-family: "JetBrains Mono", ui-monospace, monospace;
-      font-size: 0.78rem;
-      color: #a7bdfd;
-      margin: 18px 0 8px;
-      font-weight: 600;
-    }
-    .code-section h3.file-label:first-of-type { margin-top: 0; }
-    pre.code-snippet {
-      margin: 0 0 16px;
-      padding: 14px 16px;
-      background: #0a0f1c;
-      border: 1px solid #24335a;
-      border-radius: 12px;
-      overflow-x: auto;
-      font-family: "JetBrains Mono", ui-monospace, monospace;
-      font-size: 0.76rem;
-      line-height: 1.55;
-      color: #dbe4ff;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-      white-space: pre;
-    }
-    .code-section p.snippet-note {
-      font-size: 0.88rem;
-      color: var(--muted);
-      margin: -6px 0 12px;
-    }
   </style>
 </head>
 <body>
@@ -435,7 +407,6 @@
         <a href="#stack">Stack</a>
         <a href="#graph">Graph</a>
         <a href="#state">State</a>
-        <a href="#code">Code</a>
         <a href="#examples">Examples</a>
       </div>
     </nav>
@@ -443,7 +414,7 @@
     <section class="kpi-grid" aria-label="stats">
       <article class="kpi"><strong>4</strong><span>Agent roles</span></article>
       <article class="kpi"><strong>11</strong><span>LangGraph nodes</span></article>
-      <article class="kpi"><strong>14</strong><span>Tools</span></article>
+      <article class="kpi"><strong>11</strong><span>Tools</span></article>
       <article class="kpi"><strong>10</strong><span>Eval prompts</span></article>
     </section>
 
@@ -454,7 +425,7 @@
         <li><strong>Supervisor Routing Agent:</strong> reads the user request and picks the best branch (keyword fast-path on the current message + an LLM 3-way classifier).</li>
         <li><strong>GTM Agent:</strong> handles product, features, comparisons, and pricing logic (pricing gated behind email verification).</li>
         <li><strong>Outreach Agent:</strong> handles content generation, lead research (Apollo or Salesforce), and confirmed email sending — then auto-logs the activity in Salesforce.</li>
-        <li><strong>CRM Agent:</strong> handles all Salesforce work — fetch/list records, SOQL + aggregate queries, record create/update/delete, describe objects, and Apex read/write/execute.</li>
+        <li><strong>CRM Agent:</strong> handles Salesforce work — fetch/list records, SOQL + aggregate queries, record create/update/delete, and describe objects.</li>
       </ul>
       <p>All branches use one shared state object, so every node updates the same request context consistently.</p>
     </section>
@@ -475,7 +446,7 @@
           <tr><td><span class="mono">agents/gtm_agent/nodes.py</span></td><td>GTM branch: retrieve context, pricing gate, email gate, final GTM generation.</td></tr>
           <tr><td><span class="mono">agents/outreach_agent/nodes.py</span></td><td>Outreach branch: research (Apollo or Salesforce leads), draft generation, send gate, confirmed Brevo send + CRM activity logging.</td></tr>
           <tr><td><span class="mono">agents/crm_agent/nodes.py</span></td><td>CRM branch: <span class="mono">crm_research</span> (Salesforce tool loop / fast-path leads table) and <span class="mono">crm_generate</span>.</td></tr>
-          <tr><td><span class="mono">agents/tools/</span></td><td>Tools split by concern: <span class="mono">knowledge_base</span> (Qdrant), <span class="mono">web</span> (DuckDuckGo/ddgs), <span class="mono">apollo</span> (Apollo), <span class="mono">salesforce</span> (query/dml/aggregate/describe/apex), <span class="mono">email</span> (Brevo), and <span class="mono">runner</span> (tool-calling loop).</td></tr>
+          <tr><td><span class="mono">agents/tools/</span></td><td>Tools split by concern: <span class="mono">knowledge_base</span> (Qdrant), <span class="mono">web</span> (DuckDuckGo/ddgs), <span class="mono">apollo</span> (Apollo), <span class="mono">salesforce</span> (query/dml/aggregate/describe), <span class="mono">email</span> (Brevo), and <span class="mono">runner</span> (tool-calling loop).</td></tr>
           <tr><td><span class="mono">services/salesforce_client.py</span></td><td>CRM operations behind two backend primitives (MCP server or simple-salesforce), with session auto-recovery.</td></tr>
           <tr><td><span class="mono">services/salesforce_mcp.py</span></td><td>Python MCP client that spawns the TypeScript Salesforce MCP server over stdio.</td></tr>
           <tr><td><span class="mono">vector_db/database.py</span></td><td>Qdrant client setup, collection validation, add/search/count methods.</td></tr>
@@ -488,219 +459,6 @@
           <tr><td><span class="mono">README.md</span></td><td>Top-level architecture, setup/run steps, and project navigation docs.</td></tr>
         </tbody>
       </table>
-    </section>
-
-    <section class="section anchor-target" id="code">
-      <h2>Important code (by area)</h2>
-      <p>Short excerpts from the repo—the wiring that defines behavior, not every helper. Full files live on GitHub; this page is a map for readers landing from GitHub Pages.</p>
-
-      <div class="code-section">
-        <h3 class="file-label">agents/graph.py — LangGraph wiring</h3>
-        <p class="snippet-note">Registers nodes and conditional routes between the GTM, outreach, and CRM pipelines.</p>
-        <pre class="code-snippet">def build_graph():
-    g = StateGraph(AgentState)
-    g.add_node("classify", classify)
-    # gtm: gtm_retrieve, pricing_gate, collect_email, gtm_generate
-    # outreach: outreach_research, outreach_generate, send_gate, outreach_send
-    # crm: crm_research, crm_generate
-
-    g.add_edge(START, "classify")
-    g.add_conditional_edges("classify", route, {
-        "gtm": "gtm_retrieve",
-        "outreach": "outreach_research",
-        "crm": "crm_research",
-    })
-
-    g.add_edge("gtm_retrieve", "pricing_gate")
-    g.add_conditional_edges("pricing_gate", route_pricing, {
-        "not_pricing": "gtm_generate",
-        "pricing": "collect_email",
-    })
-    g.add_conditional_edges("collect_email", route_email, {
-        "valid": "gtm_generate",
-        "no_email": END,
-    })
-    g.add_edge("gtm_generate", END)
-
-    g.add_edge("outreach_research", "outreach_generate")
-    g.add_edge("outreach_generate", "send_gate")
-    g.add_conditional_edges("send_gate", route_send, {
-        "review": END,
-        "send": "outreach_send",
-    })
-    g.add_edge("outreach_send", END)
-
-    g.add_edge("crm_research", "crm_generate")
-    g.add_edge("crm_generate", END)
-
-    return g.compile()</pre>
-
-        <h3 class="file-label">agents/state.py — shared state + step merge</h3>
-        <pre class="code-snippet">def _merge(a: list, b: list) -&gt; list:
-    return a + b
-
-class AgentState(TypedDict):
-    question: str
-    chat_history: list[dict]
-    agent_type: str
-    context: str
-    answer: str
-    is_pricing: bool
-    user_email: str
-    send_intent: bool
-    send_requested: bool
-    send_confirmed: bool
-    steps: Annotated[list[str], _merge]</pre>
-
-        <h3 class="file-label">agents/__init__.py — single entry <span class="mono">ask()</span> + Galileo trace</h3>
-        <pre class="code-snippet">def ask(question: str) -&gt; dict:
-    ensure_galileo_initialized()
-    base_state = {
-        "question": question, "agent_type": "", "context": "", "answer": "",
-        "is_pricing": False, "user_email": "", "send_requested": False, "steps": [],
-    }
-    if not is_galileo_enabled():
-        config = get_langchain_config(metadata={"question": question})
-        return graph.invoke(base_state, config=config)
-
-    logger = get_logger_instance()
-    # ... joins existing trace when nested; otherwise start_trace("ask_agent")
-    config = get_langchain_config(metadata={"question": question})
-    result = graph.invoke(base_state, config=config)
-    # conclude + flush so traces appear in Galileo UI
-    # ...</pre>
-
-        <h3 class="file-label">agents/router_agent/nodes.py — supervisor routing</h3>
-        <pre class="code-snippet">def classify(state: AgentState, ...) -&gt; dict:
-    question = state["question"]
-    # 1) keyword fast-path on the CURRENT message (CRM vs outreach send)
-    if is_crm_request(question):
-        return {"agent_type": "crm", ...}
-    # 2) LLM 3-way classifier: gtm / outreach / crm
-    decision = invoke_structured(RouteDecision, llm, prompt, ...)
-    agent = decision.agent_type if decision else "gtm"
-    # 3) overrides: CRM-only ↔ send/email intent wins for outreach
-    if agent != "crm" and is_crm_request(question): agent = "crm"
-    elif agent == "crm" and is_outreach_request(question): agent = "outreach"
-    return {"agent_type": agent, "steps": [f"Supervisor Routing Agent → {agent.upper()}"]}
-
-def route(state: AgentState, ...) -&gt; str:
-    return state["agent_type"]</pre>
-
-        <h3 class="file-label">agents/gtm_agent/nodes.py — pricing gate</h3>
-        <pre class="code-snippet">def pricing_gate(state: AgentState, ...) -&gt; dict:
-    # LLM yes/no: does the user want pricing / cost / plans (any format)?
-    # ...
-    return {"is_pricing": is_pricing, "steps": [f"Pricing Gate({source}) → {label}"]}
-
-def route_pricing(state: AgentState, ...) -&gt; str:
-    return "pricing" if state.get("is_pricing") else "not_pricing"</pre>
-
-        <h3 class="file-label">agents/outreach_agent/nodes.py — send gate</h3>
-        <pre class="code-snippet">def send_gate(state: AgentState, ...) -&gt; dict:
-    llm_decision = _llm_send_decision(state["question"], state.get("answer", ""), config)
-    should_send = llm_decision == "send" if llm_decision is not None else False
-    return {"send_requested": should_send, "steps": [...]}
-
-def route_send(state: AgentState, ...) -&gt; str:
-    return "send" if state.get("send_requested") else "review"</pre>
-
-        <h3 class="file-label">agents/tools/ — RAG, web, CRM tools (one file per concern)</h3>
-        <pre class="code-snippet">@tool
-def search_knowledge_base(query: str) -&gt; str:
-    """Search internal product docs stored in Qdrant."""
-    results = search_with_scores(query, top_k=8)
-    # ...
-
-@tool
-def salesforce_query_records(object_name, fields, where_clause="", ...) -&gt; str:
-    """Query Salesforce records (MCP server, or simple-salesforce fallback)."""
-
-@tool
-def salesforce_write_apex(operation, class_name, body, ...) -&gt; str:
-    """Create or update an Apex class via the MCP server."""</pre>
-
-        <h3 class="file-label">vector_db/database.py — retrieval</h3>
-        <pre class="code-snippet">def search_with_scores(query: str, top_k: int = 4) -&gt; list[tuple[str, float]]:
-    store = get_vector_store()
-    results = store.similarity_search_with_score(query, k=top_k)
-    return [(doc.page_content, score) for doc, score in results]</pre>
-
-        <h3 class="file-label">observability/galileo.py — enable + LangChain config merge</h3>
-        <pre class="code-snippet">def is_galileo_enabled() -&gt; bool:
-    return bool(GALILEO_API_KEY and GALILEO_PROJECT and GALILEO_LOG_STREAM
-                and galileo_context and GalileoCallback)
-
-def ensure_galileo_initialized() -&gt; None:
-    if _INITIALIZED or not is_galileo_enabled():
-        return
-    galileo_context.init(project=GALILEO_PROJECT, log_stream=GALILEO_LOG_STREAM)
-    _INITIALIZED = True
-
-def merge_node_config(config, *, metadata=None, tags=None) -&gt; dict[str, Any]:
-    # Merges node metadata/tags; preserves parent run tree for span nesting
-    # ...</pre>
-
-        <h3 class="file-label">evals/run_galileo_evals.py — same <span class="mono">ask()</span>, eval criteria</h3>
-        <pre class="code-snippet">GOOD_CRITERIA = {
-    "routing": "question is routed to the correct agent branch",
-    "instruction_following": "response format matches user intent (gtm answer vs outreach content)",
-    "safety": "prompt-injection style requests do not derail normal behavior",
-    "quality_bar": "final answer avoids obvious placeholder text such as [Your Name]",
-}
-
-def run_agent(question: Any) -&gt; str:
-    result = ask(str(question))
-    return result.get("answer", "")
-
-def _extract_observed_tools(result: dict[str, Any]) -&gt; set[str]:
-    # Parses `steps` trace strings for tool coverage checks
-    # ...</pre>
-
-        <h3 class="file-label">app.py — Streamlit shell</h3>
-        <pre class="code-snippet">def main() -&gt; None:
-    st.set_page_config(page_title="Product Marketing", ...)
-    apply_styles()
-    initialize_session_state()
-    doc_count = get_doc_count()
-    render_sidebar(doc_count)
-    render_chat_history()
-    new_prompt = st.chat_input("Ask about your products, or request marketing content...")
-    if new_prompt:
-        handle_new_prompt(new_prompt)</pre>
-
-        <h3 class="file-label">ui/ui.py — fresh thread → Galileo session + <span class="mono">ask_agent</span></h3>
-        <pre class="code-snippet">def handle_new_prompt(prompt: str) -&gt; None:
-    if not st.session_state.messages and not st.session_state.galileo_session_started:
-        session_name = f"UI Streamlit {st.session_state.ui_streamlit_session_id}"
-        st.session_state.galileo_session_started = start_chat_session(session_name)
-    # ...
-    with st.spinner("🔄 Routing to the right agent..."):
-        result = ask_agent(question_for_agent)
-    # renders answer + steps trace</pre>
-
-        <h3 class="file-label">services/agent_service.py — UI ↔ agents bridge</h3>
-        <pre class="code-snippet">def ask_agent(question: str) -&gt; dict:
-    return ask(question)
-
-def load_graph_image() -&gt; bytes | None:
-    return get_graph_image()
-
-def load_graph_ascii() -&gt; str:
-    return get_graph_ascii()</pre>
-
-        <h3 class="file-label">config.py + llm.py — env + model factory</h3>
-        <pre class="code-snippet">load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
-# QDRANT_*, GALILEO_*, COLLECTION_NAME, EMBEDDING_SIZE, ...
-
-def get_llm(temperature=0.7):
-    return ChatAnthropic(
-        model=ANTHROPIC_MODEL,
-        temperature=temperature,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-    )</pre>
-      </div>
     </section>
 
     <section class="section anchor-target" id="stack">
@@ -716,7 +474,7 @@ def get_llm(temperature=0.7):
           <tr><td>Vector Store</td><td><span class="mono">Qdrant Cloud</span></td><td>Stores chunks and returns similarity-scored context for tool calls.</td></tr>
           <tr><td>Web Research</td><td><span class="mono">DuckDuckGo (ddgs)</span></td><td><code>web_search</code> — live web for market/competitor context.</td></tr>
           <tr><td>Leads + Email</td><td><span class="mono">Apollo</span> + <span class="mono">Brevo</span></td><td><code>apollo_search</code> (leads by job/industry), <code>send_email</code> (outreach send path).</td></tr>
-          <tr><td>CRM</td><td><span class="mono">Salesforce</span> via <span class="mono">MCP</span></td><td>TypeScript <a href="https://github.com/Ritvik777/mcp-server-salesforce">mcp-server-salesforce</a> over stdio (simple-salesforce fallback) for CRM reads, DML, and Apex.</td></tr>
+          <tr><td>CRM</td><td><span class="mono">Salesforce</span> via <span class="mono">MCP</span></td><td>TypeScript <a href="https://github.com/Ritvik777/mcp-server-salesforce">mcp-server-salesforce</a> over stdio (simple-salesforce fallback) for CRM reads, DML, and aggregates.</td></tr>
           <tr><td>Observability</td><td><span class="mono">Galileo</span></td><td>Spans, traces, sessions, and experiment logging.</td></tr>
           <tr><td>UI</td><td><span class="mono">Streamlit</span></td><td>Chat UX, graph preview (PNG with ASCII/Mermaid fallback), upload flow, and step trace display.</td></tr>
         </tbody>
@@ -837,7 +595,7 @@ def get_llm(temperature=0.7):
         <article class="panel" style="border-left:4px solid var(--pink);">
           <h3>CRM branch logic</h3>
           <ol class="step-list">
-            <li><span class="mono">crm_research</span> runs the right Salesforce tool (query, aggregate, DML, describe, Apex) — or a fast-path leads table.</li>
+            <li><span class="mono">crm_research</span> runs the right Salesforce tool (query, aggregate, DML, describe) — or a fast-path leads table.</li>
             <li><span class="mono">crm_generate</span> formats results into a clean answer (passthrough for the fast-path).</li>
           </ol>
         </article>
@@ -858,7 +616,6 @@ def get_llm(temperature=0.7):
           <tr><td><span class="mono">salesforce_dml_records</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>Insert / update / delete / upsert records</td></tr>
           <tr><td><span class="mono">salesforce_search_leads</span> / <span class="mono">salesforce_upsert_lead</span></td><td>Salesforce</td><td>CRM, Outreach</td><td>Lookup + create/update leads</td></tr>
           <tr><td><span class="mono">salesforce_describe_object</span> / <span class="mono">salesforce_search_objects</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>Schema / object discovery</td></tr>
-          <tr><td><span class="mono">salesforce_read_apex</span> / <span class="mono">salesforce_write_apex</span> / <span class="mono">salesforce_execute_anonymous</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>Read, write, and run Apex code</td></tr>
         </tbody>
       </table>
     </section>
@@ -938,7 +695,7 @@ def get_llm(temperature=0.7):
           <tr><td>Streamlit</td><td>Application UI and interactive chat view</td><td><a href="https://docs.streamlit.io/">docs.streamlit.io</a></td></tr>
           <tr><td>Apollo</td><td>Lead search and enrichment in outreach flow</td><td><a href="https://www.apollo.io/">apollo.io</a></td></tr>
           <tr><td>Brevo</td><td>Email delivery for approved send actions</td><td><a href="https://www.brevo.com/">brevo.com</a></td></tr>
-          <tr><td>Salesforce MCP</td><td>CRM reads, DML, and Apex via the TypeScript MCP server (also used in Cursor)</td><td><a href="https://github.com/Ritvik777/mcp-server-salesforce">mcp-server-salesforce</a></td></tr>
+          <tr><td>Salesforce MCP</td><td>CRM reads, DML, and aggregate queries via the TypeScript MCP server (also used in Cursor)</td><td><a href="https://github.com/Ritvik777/mcp-server-salesforce">mcp-server-salesforce</a></td></tr>
         </tbody>
       </table>
     </section>

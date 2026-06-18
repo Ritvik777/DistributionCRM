@@ -1,4 +1,4 @@
-"""CRM Agent — owns all Salesforce operations (reads, aggregates, record DML, Apex).
+"""CRM Agent — owns Salesforce data operations (reads, aggregates, record DML, schema).
 
 Routed to whenever the supervisor classifies a message as CRM/Salesforce work.
 
@@ -22,9 +22,6 @@ from agents.tools import (
     salesforce_upsert_lead,
     salesforce_search_objects,
     salesforce_describe_object,
-    salesforce_read_apex,
-    salesforce_write_apex,
-    salesforce_execute_anonymous,
 )
 from llm import get_llm
 from observability import merge_node_config
@@ -45,9 +42,6 @@ _CRM_TOOLS = [
     salesforce_dml_records,
     salesforce_search_objects,
     salesforce_describe_object,
-    salesforce_read_apex,
-    salesforce_write_apex,
-    salesforce_execute_anonymous,
 ]
 
 # Read verbs that justify the deterministic "latest leads" table fast-path.
@@ -57,7 +51,7 @@ _READ_VERB_RE = re.compile(
 )
 # Write/advanced signals: if present, do NOT use the fast-path — run the tool loop instead.
 _WRITE_OR_ADVANCED_RE = re.compile(
-    r"\b(apex|soql|sosl|aggregate|count|sum|average|group by|describe|object|trigger|"
+    r"\b(soql|aggregate|count|sum|average|group by|describe|object|"
     r"contact|account|opportunity|case|update|delete|insert|create|upsert|save|add|log|new)\b",
     re.IGNORECASE,
 )
@@ -142,7 +136,6 @@ def crm_research(state: AgentState, config: RunnableConfig | None = None) -> dic
             "- Counts/grouping: salesforce_aggregate_query\n"
             "- Create/update/delete records: salesforce_dml_records (or salesforce_upsert_lead for leads)\n"
             "- Inspect schema: salesforce_describe_object, salesforce_search_objects\n"
-            "- Apex: salesforce_read_apex, salesforce_write_apex, salesforce_execute_anonymous\n"
             "Call the minimum tools needed, then stop. Do not invent record IDs."
         ),
     )
@@ -160,7 +153,7 @@ def crm_generate(state: AgentState, config: RunnableConfig | None = None) -> dic
     resp = llm.invoke(
         "You are a Salesforce CRM specialist. Using ONLY the tool results below, answer the user's request.\n"
         "- Present records or query results as a clean Markdown table when appropriate.\n"
-        "- For Apex or execution results, show the relevant output and a one-line summary.\n"
+        "- For aggregate/count results, summarize the grouping clearly.\n"
         "- If the tool results contain an error, explain it plainly and suggest the fix.\n\n"
         f"Tool results:\n{ctx}\n\n{turn}\nAnswer:",
         config=merge_node_config(

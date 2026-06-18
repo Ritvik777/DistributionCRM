@@ -10,7 +10,7 @@ def _require_salesforce() -> str | None:
 
 
 def _require_mcp() -> str | None:
-    """Advanced CRM tools (Apex, describe, SOSL) require the MCP backend."""
+    """Advanced CRM tools (aggregate, describe, object search) require the MCP backend."""
     from services.salesforce_client import is_salesforce_configured, uses_mcp_server
 
     if not is_salesforce_configured():
@@ -271,50 +271,3 @@ def salesforce_describe_object(object_name: str) -> str:
         return _call_mcp("salesforce_describe_object", {"objectName": object_name})
     except Exception as e:
         return f"Salesforce describe failed: {e}"
-
-
-@tool
-def salesforce_read_apex(class_name: str = "", name_pattern: str = "") -> str:
-    """Read Apex class source. Provide a class name, or a wildcard name pattern (e.g. 'Account*')."""
-    err = _require_mcp()
-    if err:
-        return err
-    try:
-        return _call_mcp("salesforce_read_apex", {
-            "className": class_name,
-            "namePattern": name_pattern,
-        })
-    except Exception as e:
-        return f"Salesforce read Apex failed: {e}"
-
-
-@tool
-def salesforce_write_apex(operation: str, class_name: str, body: str, api_version: str = "") -> str:
-    """Create or update an Apex class. operation is 'create' or 'update'; body is the full Apex source."""
-    err = _require_mcp()
-    if err:
-        return err
-    try:
-        return _call_mcp("salesforce_write_apex", {
-            "operation": operation,
-            "className": class_name,
-            "body": body,
-            "apiVersion": api_version,
-        })
-    except Exception as e:
-        return f"Salesforce write Apex failed: {e}"
-
-
-@tool
-def salesforce_execute_anonymous(apex_code: str, log_level: str = "") -> str:
-    """Execute anonymous Apex code and return execution results/debug logs."""
-    err = _require_mcp()
-    if err:
-        return err
-    try:
-        return _call_mcp("salesforce_execute_anonymous", {
-            "apexCode": apex_code,
-            "logLevel": log_level,
-        })
-    except Exception as e:
-        return f"Salesforce execute anonymous failed: {e}"

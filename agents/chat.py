@@ -17,9 +17,9 @@ _CRM_OP_RE = re.compile(
     r"update|create|delete|insert|upsert|modify|status|save|add|log)\b",
     re.IGNORECASE,
 )
-# Strong CRM signals: Apex/SOQL/metadata operations always belong to the CRM agent.
-_CRM_APEX_RE = re.compile(
-    r"\b(apex|soql|sosl|execute anonymous|trigger|aggregate query|describe (the )?object)\b",
+# Strong CRM signals: SOQL/aggregate/metadata operations always belong to the CRM agent.
+_CRM_SIGNAL_RE = re.compile(
+    r"\b(soql|aggregate query|describe (the )?object|group by)\b",
     re.IGNORECASE,
 )
 # Outreach verbs: emailing/messaging intent. "send" alone is excluded (ambiguous, e.g.
@@ -34,11 +34,11 @@ _OUTREACH_VERB_RE = re.compile(
 def is_crm_request(text: str) -> bool:
     """True when the message should be handled by the dedicated CRM (Salesforce) agent.
 
-    Covers reads (leads/contacts/objects), aggregates, record DML, and Apex/SOQL work.
-    A send/email intent always wins (CRM agent cannot send email) — except pure Apex/SOQL.
+    Covers reads (leads/contacts/objects), aggregates, record DML, and SOQL/metadata work.
+    A send/email intent always wins (CRM agent cannot send email) — except pure SOQL/metadata.
     """
-    # Apex / SOQL / metadata work is unambiguously CRM, even if it mentions email.
-    if _CRM_APEX_RE.search(text):
+    # SOQL / aggregate / metadata work is unambiguously CRM, even if it mentions email.
+    if _CRM_SIGNAL_RE.search(text):
         return True
     # Email/outreach intent → outreach agent (it can also look up CRM during research),
     # even if the message mentions Salesforce/leads.
@@ -59,9 +59,9 @@ def is_crm_request(text: str) -> bool:
 def is_outreach_request(text: str) -> bool:
     """True when the message has an email/outreach send intent (which the CRM agent cannot do).
 
-    Apex/SOQL still belongs to CRM, so those are excluded.
+    SOQL/metadata work still belongs to CRM, so those are excluded.
     """
-    if _CRM_APEX_RE.search(text):
+    if _CRM_SIGNAL_RE.search(text):
         return False
     return bool(_OUTREACH_VERB_RE.search(text))
 
