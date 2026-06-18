@@ -1,9 +1,9 @@
-import base64
 import logging
 import re
 
 from langchain_core.runnables import RunnableConfig
 
+from agents.constants import EMAIL_PATTERN
 from agents.state import AgentState
 from agents.chat import build_turn_context
 from agents.schemas import PricingGateDecision
@@ -11,59 +11,14 @@ from agents.structured import invoke_structured
 from llm import get_llm
 from agents.tools import search_knowledge_base, web_search, call_tools
 from observability import merge_node_config
-from vector_db import match_component_image, search_kb_hits
+from services.component_match_service import (
+    format_component_match_context,
+    kb_sources_for_matches,
+    run_component_image_match,
+)
+
 
 logger = logging.getLogger(__name__)
-EMAIL_PATTERN = r"[\w.+-]+@[\w-]+\.[\w.]+"
-
-
-def _format_component_match_context(matches: list[dict]) -> str:
-    if not matches:
-        return (
-            "Component image matching found no catalog matches. "
-            "The component image catalog may be empty, or this part is not indexed yet."
-        )
-    query_summary = matches[0].get("query_summary") or ""
-    lines = [
-        "Component image hybrid match results (CLIP visual search + Claude vision re-rank + text KB):",
-    ]
-    if query_summary:
-        lines.append(f"Query image understood as: {query_summary}")
-    for index, match in enumerate(matches, start=1):
-        label = match.get("name") or match.get("sku") or match.get("source") or f"Candidate {index}"
-        lines.append(
-            f"{index}. {label} — {match.get('match_percent', 0)}% combined confidence\n"
-            f"   SKU: {match.get('sku') or 'n/a'} | Category: {match.get('category') or 'n/a'} | "
-            f"Package: {match.get('package') or 'n/a'}\n"
-            f"   CLIP: {match.get('clip_score')} | Vision: {match.get('vision_score')}/100 | "
-            f"Text KB: {match.get('text_score')}\n"
-            f"   Reason: {match.get('reasoning')}\n"
-            f"   Catalog caption: {match.get('caption') or 'n/a'}"
-        )
-    return "\n\n".join(lines)
-
-
-def _kb_sources_from_hits(hits: list[dict]) -> list[dict]:
-    return [
-        {
-            "source": hit.get("source") or "(unknown)",
-            "type": hit.get("type") or "text",
-            "score": hit.get("score", 0),
-            "excerpt": hit.get("excerpt") or "",
-        }
-        for hit in hits
-    ]
-
-
-def _run_component_image_match(image_b64: str) -> tuple[str, list[dict], list[dict]]:
-    raw = base64.standard_b64decode(image_b64)
-    matches = match_component_image(raw)
-    context = _format_component_match_context(matches)
-    kb_sources: list[dict] = []
-    query_summary = matches[0].get("query_summary") if matches else ""
-    if query_summary:
-        kb_sources = _kb_sources_from_hits(search_kb_hits(query_summary, top_k=6))
-    return context, matches, kb_sources
 
 
 def gtm_retrieve(state: AgentState, config: RunnableConfig | None = None) -> dict:
@@ -71,12 +26,8 @@ def gtm_retrieve(state: AgentState, config: RunnableConfig | None = None) -> dic
     if image_b64:
         existing = state.get("component_matches") or []
         if existing:
-            ctx = _format_component_match_context(existing)
-            kb_sources = state.get("kb_sources") or []
-            if not kb_sources:
-                query_summary = existing[0].get("query_summary") if existing else ""
-                if query_summary:
-                    kb_sources = _kb_sources_from_hits(search_kb_hits(query_summary, top_k=6))
+            ctx = format_component_match_context(existing)
+            kb_sources = state.get("kb_sources") or kb_sources_for_matches(existing)
             best = existing[0].get("match_percent", 0) if existing else 0
             return {
                 "context": ctx,
@@ -84,7 +35,7 @@ def gtm_retrieve(state: AgentState, config: RunnableConfig | None = None) -> dic
                 "kb_sources": kb_sources,
                 "steps": [f"GTM Retrieve → component image match ({len(existing)} hits, best {best}%)"],
             }
-        ctx, matches, kb_sources = _run_component_image_match(image_b64)
+        ctx, matches, kb_sources = run_component_image_match(image_b64)
         best = matches[0]["match_percent"] if matches else 0
         return {
             "context": ctx,

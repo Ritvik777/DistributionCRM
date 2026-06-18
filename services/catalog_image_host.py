@@ -3,22 +3,16 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 
 import requests
 
-from config import COMPONENT_IMAGE_PUBLIC_BASE_URL
+from config import CATALOG_IMAGE_TEMP_UPLOAD, COMPONENT_IMAGE_PUBLIC_BASE_URL
 
 logger = logging.getLogger(__name__)
 
-_TEMP_UPLOAD_DEFAULT = os.getenv("CATALOG_IMAGE_TEMP_UPLOAD", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+_TEMP_UPLOAD_DEFAULT = CATALOG_IMAGE_TEMP_UPLOAD
 
 
 def catalog_image_public_url(match: dict) -> str | None:

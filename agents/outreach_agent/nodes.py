@@ -1,11 +1,11 @@
 import logging
-import os
 import re
 
 from langchain_core.runnables import RunnableConfig
 
+from agents.constants import EMAIL_PATTERN
 from agents.state import AgentState
-from agents.chat import build_turn_context
+from agents.chat import build_turn_context, wants_salesforce_leads_for_outreach
 from agents.schemas import LeadsGateDecision, SendIntentDecision
 from agents.structured import invoke_structured
 from llm import get_llm
@@ -19,19 +19,15 @@ from agents.tools import (
 )
 from agents.tools.knowledge_base import begin_kb_collection, consume_kb_sources
 from observability import merge_node_config
-
-try:
-    from services.salesforce_client import is_salesforce_configured, log_email_activity
-except ImportError:
-    def is_salesforce_configured() -> bool:
-        return False
-
-    def log_email_activity(*args, **kwargs):
-        raise RuntimeError("Salesforce client unavailable")
+from config import BREVO_FROM_EMAIL, BREVO_FROM_NAME
+from services.component_match_service import resolve_component_context
+from services.salesforce_repository import (
+    fetch_leads_with_email,
+    format_leads_for_outreach,
+)
+from services.salesforce_client import is_salesforce_configured
 
 logger = logging.getLogger(__name__)
-
-EMAIL_PATTERN = r"[\w.+-]+@[\w-]+\.[\w.]+"
 
 
 def _leads_gate_decision(state: AgentState, config: RunnableConfig | None = None) -> tuple[str, str]:
@@ -46,9 +42,9 @@ def _leads_gate_decision(state: AgentState, config: RunnableConfig | None = None
         get_llm(temperature=0),
         (
             "You are a gate in a Product Marketing outreach assistant.\n"
-            "Choose crm if the user wants to fetch, list, or search existing leads/contacts in Salesforce/CRM.\n"
             "Choose leads if the user wants to FIND new prospects/people/companies to contact (Apollo/net-new).\n"
-            "Choose content if the user wants to write emails, posts, or marketing copy.\n"
+            "Choose content if the user wants to write emails, posts, or marketing copy to known recipients.\n"
+            "If the user wants to fetch/list existing Salesforce CRM records, that is handled elsewhere — choose content unless they want net-new Apollo research.\n"
             "If uncertain, choose content.\n\n"
             f"{turn}"
         ),
@@ -182,9 +178,7 @@ def _extract_products(*texts: str) -> str:
 
 
 def _sender_label() -> str:
-    name = os.getenv("BREVO_FROM_NAME", "Product Marketing")
-    email = os.getenv("BREVO_FROM_EMAIL", "")
-    return f"{name} <{email}>" if email else name
+    return f"{BREVO_FROM_NAME} <{BREVO_FROM_EMAIL}>" if BREVO_FROM_EMAIL else BREVO_FROM_NAME
 
 
 def _salesforce_tools():
@@ -194,71 +188,33 @@ def _salesforce_tools():
     return [salesforce_search_leads, salesforce_query_records]
 
 
-_SF_PLATFORM_RE = re.compile(r"\b(salesforce|sfdc|crm)\b", re.IGNORECASE)
-
-
-def _wants_salesforce_leads(text: str) -> bool:
-    """User wants to email recipients sourced from Salesforce (e.g. 'email the leads from salesforce')."""
-    return bool(_SF_PLATFORM_RE.search(text) and re.search(r"\blead", text, re.IGNORECASE))
-
-
 def _salesforce_leads_context(turn: str, limit: int = 10) -> tuple[str, int, list[dict]]:
     """Pull leads (with emails) from Salesforce + product info, formatted for per-lead email drafting."""
-    from services.salesforce_mcp import parse_query_records
-
-    raw = salesforce_query_records.invoke({
-        "object_name": "Lead",
-        "fields": ["Id", "Name", "Email", "Company", "Title", "Status"],
-        "order_by": "CreatedDate DESC",
-        "limit": limit,
-    })
-    leads = []
-    for row in parse_query_records(raw):
-        email = (row.get("Email") or "").strip()
-        if not email or email.lower() in ("null", "none"):
-            continue
-        name = row.get("Name") or "there"
-        title = row.get("Title") if row.get("Title") not in (None, "null", "None") else "N/A"
-        company = row.get("Company") if row.get("Company") not in (None, "null", "None") else "N/A"
-        leads.append(f"**{name}** — {title} at {company}\n  Email: {email}")
-
-    if not leads:
-        return "", 0
+    rows = fetch_leads_with_email(limit=limit)
+    lead_blocks = format_leads_for_outreach(rows)
+    if not lead_blocks:
+        return "", 0, []
 
     begin_kb_collection()
     product_info = search_knowledge_base.invoke({"query": turn[:500]})
     kb_sources = consume_kb_sources()
     block = (
-        f"Found {len(leads)} leads from Salesforce CRM:\n\n"
-        + "\n\n".join(leads)
+        f"Found {len(lead_blocks)} leads from Salesforce CRM:\n\n"
+        + "\n\n".join(lead_blocks)
         + f"\n\nProduct info:\n{product_info}"
     )
-    return block, len(leads), kb_sources
-
-
-def _component_match_context(state: AgentState) -> tuple[str, list[dict], list[dict]]:
-    """Reuse precomputed matches or run hybrid match for outreach email drafts."""
-    matches = state.get("component_matches") or []
-    image_b64 = (state.get("query_image_b64") or "").strip()
-    if matches:
-        from agents.gtm_agent.nodes import _format_component_match_context
-
-        return _format_component_match_context(matches), matches, []
-    if image_b64:
-        from agents.gtm_agent.nodes import _run_component_image_match
-
-        ctx, matches, kb_sources = _run_component_image_match(image_b64)
-        return ctx, matches, kb_sources
-    return "", [], []
+    return block, len(lead_blocks), kb_sources
 
 
 def outreach_research(state: AgentState, config: RunnableConfig | None = None) -> dict:
     turn = build_turn_context(state)
     question = (state.get("question") or "").strip()
-    component_ctx, component_matches, match_kb_sources = _component_match_context(state)
+    component_ctx, component_matches, match_kb_sources = resolve_component_context(
+        component_matches=state.get("component_matches"),
+        query_image_b64=state.get("query_image_b64") or "",
+    )
 
-    # Cross-agent flow: "email the leads from Salesforce" → source recipients from CRM, then draft per lead.
-    if is_salesforce_configured() and _wants_salesforce_leads(question):
+    if is_salesforce_configured() and wants_salesforce_leads_for_outreach(question):
         block, count, kb_sources = _salesforce_leads_context(turn)
         if count:
             return {
@@ -420,12 +376,13 @@ def send_gate(state: AgentState, config: RunnableConfig | None = None) -> dict:
     label = "📤 send intent — confirm in UI" if wants_send else "👀 review only"
     return {
         "send_intent": wants_send,
-        "send_requested": False,
+        "send_requested": wants_send,
         "steps": [f"Send Gate({source}) → {label}"],
     }
 
 
 def route_send(state: AgentState, config: RunnableConfig | None = None) -> str:
+    """Actual delivery requires UI confirmation (`send_confirmed=True`)."""
     return "send" if state.get("send_confirmed") else "review"
 
 
@@ -527,8 +484,10 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
             sent.append(draft["to_email"])
             if is_salesforce_configured():
                 try:
+                    from services.salesforce_client import log_email_activity as _log_email_activity
+
                     products = _extract_products(draft["body"], draft["subject"], state.get("context", ""))
-                    crm = log_email_activity(
+                    crm = _log_email_activity(
                         email=draft["to_email"],
                         subject=draft["subject"],
                         body=draft["body"],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import html
 from pathlib import Path
 
@@ -72,6 +73,63 @@ def match_card_html(match: dict, rank: int) -> str:
     )
 
 
+def _image_mime(path_or_bytes: bytes | str, *, from_path: bool = False) -> str:
+    if from_path and isinstance(path_or_bytes, str):
+        suffix = Path(path_or_bytes).suffix.lower()
+        if suffix == ".png":
+            return "image/png"
+        if suffix == ".webp":
+            return "image/webp"
+        return "image/jpeg"
+    data = path_or_bytes if isinstance(path_or_bytes, bytes) else b""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def _bytes_to_data_uri(data: bytes, mime: str) -> str:
+    return f"data:{mime};base64,{base64.standard_b64encode(data).decode('ascii')}"
+
+
+def compare_images_html(
+    query_image_bytes: bytes | None,
+    catalog_image_path: str | None,
+    *,
+    max_height: int = 240,
+) -> str:
+    """Side-by-side Your photo vs Catalog match (HTML for consistent sizing)."""
+    query_block = '<div class="compare-placeholder">No photo</div>'
+    if query_image_bytes:
+        mime = _image_mime(query_image_bytes)
+        src = _bytes_to_data_uri(query_image_bytes, mime)
+        query_block = f'<img src="{src}" alt="Your photo" style="max-height:{max_height}px" />'
+
+    catalog_block = '<div class="compare-placeholder">No catalog image</div>'
+    if catalog_image_path and Path(catalog_image_path).exists():
+        raw = Path(catalog_image_path).read_bytes()
+        mime = _image_mime(catalog_image_path, from_path=True)
+        src = _bytes_to_data_uri(raw, mime)
+        catalog_block = f'<img src="{src}" alt="Catalog match" style="max-height:{max_height}px" />'
+
+    return (
+        '<div class="catalog-compare">'
+        '<div class="compare-side">'
+        '<div class="compare-label">Your photo</div>'
+        f'<div class="compare-frame">{query_block}</div>'
+        "</div>"
+        '<div class="compare-vs" aria-hidden="true">'
+        '<span class="compare-vs-icon">↔</span>'
+        "</div>"
+        '<div class="compare-side">'
+        '<div class="compare-label">Catalog match</div>'
+        f'<div class="compare-frame">{catalog_block}</div>'
+        "</div>"
+        "</div>"
+    )
+
+
 def render_catalog_matches_panel(
     matches: list[dict],
     query_image_bytes: bytes | None = None,
@@ -109,26 +167,19 @@ def render_catalog_matches_panel(
     if query_summary:
         st.caption(f"Query understood as: {query_summary}")
 
-    photo_col, results_col = st.columns([0.28, 0.72], gap="medium")
-    with photo_col:
-        if query_image_bytes:
-            st.caption("Your photo")
-            st.image(query_image_bytes, width=140)
-        elif matches[0].get("image_path") and Path(matches[0]["image_path"]).exists():
-            st.caption("Catalog reference")
-            st.image(matches[0]["image_path"], width=140)
+    best_path = best.get("image_path") or ""
+    st.markdown(
+        compare_images_html(query_image_bytes, best_path, max_height=260),
+        unsafe_allow_html=True,
+    )
+    st.markdown(match_card_html(best, 1), unsafe_allow_html=True)
 
-    with results_col:
-        for rank, match in enumerate(matches[:max_results], start=1):
-            thumb_col, card_col = st.columns([0.22, 0.78], gap="small")
-            image_path = match.get("image_path") or ""
-            with thumb_col:
-                if image_path and Path(image_path).exists():
-                    st.image(image_path, width=72)
-            with card_col:
-                st.markdown(match_card_html(match, rank), unsafe_allow_html=True)
-            if rank < min(len(matches), max_results):
-                st.markdown('<div class="catalog-match-divider"></div>', unsafe_allow_html=True)
+    for rank, match in enumerate(matches[1:max_results], start=2):
+        st.markdown('<div class="catalog-match-divider"></div>', unsafe_allow_html=True)
+        image_path = match.get("image_path") or ""
+        if image_path and Path(image_path).exists():
+            st.image(image_path, width=120)
+        st.markdown(match_card_html(match, rank), unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 

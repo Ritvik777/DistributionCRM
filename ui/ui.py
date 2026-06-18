@@ -1,10 +1,18 @@
-import re
 import html
 import base64
 import streamlit as st
 import os
-from pathlib import Path
 from uuid import uuid4
+from config import GALILEO_DEBUG_URLS
+from agents.constants import SEND_CONFIRM_PHRASES
+from services.conversation_service import (
+    apply_agent_result_to_session,
+    draft_has_recipient,
+    get_chat_history,
+    pending_component_matches,
+    question_for_agent,
+)
+from services.component_match_service import kb_sources_for_matches
 from services.vector_db_service import (
     add_text_documents,
     add_pdf_document,
@@ -22,9 +30,6 @@ from services.vector_db_service import (
 from services.agent_service import ask_agent, confirm_send_email
 from ui.component_vision import render_catalog_matches_panel
 from observability import start_chat_session, get_console_links
-
-EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
-
 
 APP_NAME = "Product Distribution Agent"
 
@@ -221,7 +226,66 @@ STYLE_BLOCK = """
         text-transform: uppercase; letter-spacing: 0.05em;
     }
     .catalog-match-divider {
-        height: 1px; background: var(--border); margin: 8px 0 10px;
+        height: 1px; background: var(--border); margin: 14px 0 12px;
+    }
+    .catalog-compare {
+        display: flex;
+        align-items: stretch;
+        justify-content: center;
+        gap: 14px;
+        margin: 14px 0 16px;
+    }
+    .compare-side {
+        flex: 1 1 0;
+        min-width: 0;
+        max-width: 320px;
+        text-align: center;
+    }
+    .compare-label {
+        font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.07em; color: var(--text-muted); margin-bottom: 8px;
+    }
+    .compare-frame {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 14px;
+        min-height: 220px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,.05);
+    }
+    .compare-frame img {
+        max-width: 100%;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+        border-radius: 6px;
+    }
+    .compare-placeholder {
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        padding: 2rem 1rem;
+    }
+    .compare-vs {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 36px;
+        padding-top: 1.6rem;
+    }
+    .compare-vs-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px; height: 32px;
+        border-radius: 999px;
+        background: var(--brand-light);
+        border: 1px solid #99f6e4;
+        color: var(--brand-dark);
+        font-size: 0.85rem;
+        font-weight: 700;
     }
 
     .send-banner {
@@ -237,22 +301,39 @@ BADGES = {
     "outreach": ("Customer outreach", "badge-outreach"),
     "crm": ("Salesforce CRM", "badge-crm"),
 }
-SEND_WORDS = ["send it", "send now", "go ahead and send", "yes send", "please send"]
-MAX_HISTORY_MESSAGES = 10
+SEND_WORDS = list(SEND_CONFIRM_PHRASES)
 
 
 def _draft_has_recipient(text: str) -> bool:
-    return bool(EMAIL_PATTERN.search(text or ""))
+    return draft_has_recipient(text)
 
 
 def _get_chat_history() -> list[dict]:
-    history: list[dict] = []
-    for msg in st.session_state.messages[:-1][-MAX_HISTORY_MESSAGES:]:
-        entry: dict = {"role": msg["role"], "content": msg.get("content", "")}
-        if msg.get("agent"):
-            entry["agent"] = msg["agent"]
-        history.append(entry)
-    return history
+    return get_chat_history(st.session_state.messages)
+
+
+def _pending_component_matches() -> list[dict]:
+    return pending_component_matches(
+        st.session_state.messages,
+        st.session_state.get("pending_component_matches"),
+    )
+
+
+def _question_for_agent(prompt: str) -> str:
+    return question_for_agent(
+        prompt,
+        awaiting_email=st.session_state.awaiting_email,
+        pricing_question=st.session_state.pricing_question,
+        pending_drafts=st.session_state.pending_drafts,
+    )
+
+
+def _update_session_from_result(prompt: str, result: dict) -> None:
+    apply_agent_result_to_session(st.session_state, prompt, result)
+
+
+def _kb_sources_for_matches(matches: list[dict]) -> list[dict]:
+    return kb_sources_for_matches(matches)
 
 
 def apply_styles() -> None:
@@ -293,8 +374,7 @@ def _reset_chat_state() -> None:
 
 
 def _show_galileo_debug_links_once() -> None:
-    debug_enabled = os.getenv("GALILEO_DEBUG_URLS", "false").strip().lower() in {"1", "true", "yes", "on"}
-    if not debug_enabled or st.session_state.galileo_debug_links_shown:
+    if not GALILEO_DEBUG_URLS or st.session_state.galileo_debug_links_shown:
         return
     links = get_console_links()
     if not links:
@@ -532,18 +612,6 @@ def render_sidebar(doc_count: int) -> None:
             ))
 
 
-def _pending_component_matches() -> list[dict]:
-    """Catalog match for email image — session stash, then last chat message with matches."""
-    stored = st.session_state.get("pending_component_matches") or []
-    if stored:
-        return stored
-    for message in reversed(st.session_state.messages):
-        matches = message.get("component_matches") or []
-        if matches:
-            return matches
-    return []
-
-
 def _execute_confirm_send() -> None:
     draft = st.session_state.get("pending_drafts", "")
     if not draft or not _draft_has_recipient(draft):
@@ -605,41 +673,6 @@ def render_chat_history() -> None:
             _render_trace(message.get("trace", []))
 
 
-def _question_for_agent(prompt: str) -> str:
-    if st.session_state.awaiting_email:
-        return f"{st.session_state.pricing_question} My email is {prompt}"
-    if st.session_state.pending_drafts and any(word in prompt.lower() for word in SEND_WORDS):
-        return (
-            f"{prompt}\n\nUse this draft:\n{st.session_state.pending_drafts}"
-        )
-    return prompt
-
-
-def _update_session_from_result(prompt: str, result: dict) -> None:
-    if result.get("is_pricing") and not result.get("user_email"):
-        st.session_state.awaiting_email = True
-        if not st.session_state.pricing_question:
-            st.session_state.pricing_question = prompt
-    else:
-        st.session_state.awaiting_email = False
-        st.session_state.pricing_question = ""
-
-    if result.get("send_confirmed"):
-        st.session_state.pending_drafts = ""
-        st.session_state.pending_component_matches = []
-    elif result.get("agent_type") == "outreach" and result.get("answer"):
-        answer = result["answer"]
-        if _draft_has_recipient(answer) and not answer.strip().startswith("✅ **Sent to:**"):
-            st.session_state.pending_drafts = answer
-            if result.get("component_matches"):
-                st.session_state.pending_component_matches = result["component_matches"]
-            elif not st.session_state.get("pending_component_matches"):
-                for message in reversed(st.session_state.messages):
-                    if message.get("component_matches"):
-                        st.session_state.pending_component_matches = message["component_matches"]
-                        break
-
-
 def _push_assistant_message(result: dict) -> None:
     st.session_state.messages.append(
         {
@@ -651,25 +684,6 @@ def _push_assistant_message(result: dict) -> None:
             "component_matches": result.get("component_matches", []),
         }
     )
-
-
-def _kb_sources_for_matches(matches: list[dict]) -> list[dict]:
-    if not matches:
-        return []
-    summary = matches[0].get("query_summary") or ""
-    if not summary:
-        return []
-    from vector_db import search_kb_hits
-
-    return [
-        {
-            "source": hit.get("source") or "(unknown)",
-            "type": hit.get("type") or "text",
-            "score": hit.get("score", 0),
-            "excerpt": hit.get("excerpt") or "",
-        }
-        for hit in search_kb_hits(summary, top_k=6)
-    ]
 
 
 def render_chat_composer() -> tuple[str, bytes | None, str]:

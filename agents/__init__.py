@@ -1,22 +1,18 @@
 """
-agents/ — The multi-agent system
-==================================
-  state.py              → shared pipeline state
-  chat.py               → conversation history + intent helpers
-  schemas.py            → structured-output models for gates/routing
-  structured.py         → structured LLM invocation helper
-  tools/                → shared tools (KB, web, Apollo, Salesforce, email) + runner
-  graph.py              → wires everything into a LangGraph
-
-  router_agent/         → 🚦 Supervisor Routing Agent (picks which agent handles it)
-  gtm_agent/            → 🎯 GTM Agent (product questions + pricing gate)
-  outreach_agent/       → 📝 Outreach Agent (content creation + sending)
-  crm_agent/            → 🗂️ CRM Agent (Salesforce reads, DML, aggregates, schema)
+agents/ — The multi-agent system (lazy imports to keep lightweight submodule loading).
 """
 
-from agents.graph import graph
-from agents.outreach_agent.nodes import outreach_send
 from observability import ensure_galileo_initialized, get_langchain_config, get_logger_instance, is_galileo_enabled
+
+_graph = None
+
+
+def _get_graph():
+    global _graph
+    if _graph is None:
+        from agents.graph import graph as compiled_graph
+        _graph = compiled_graph
+    return _graph
 
 
 def _base_state(
@@ -50,19 +46,19 @@ def _invoke_with_tracing(state: dict, *, trace_name: str = "ask_agent") -> dict:
 
     if not is_galileo_enabled():
         config = get_langchain_config(metadata={"question": question})
-        return graph.invoke(state, config=config)
+        return _get_graph().invoke(state, config=config)
 
     logger = get_logger_instance()
     if logger is None:
         config = get_langchain_config(metadata={"question": question})
-        return graph.invoke(state, config=config)
+        return _get_graph().invoke(state, config=config)
 
     in_existing_trace = logger.current_parent() is not None
     if not in_existing_trace:
         logger.start_trace(input={"question": question}, name=trace_name)
     config = get_langchain_config(metadata={"question": question})
     try:
-        result = graph.invoke(state, config=config)
+        result = _get_graph().invoke(state, config=config)
         if not in_existing_trace:
             logger.conclude(result.get("answer", ""))
             logger.flush()
@@ -103,6 +99,8 @@ def confirm_send(
     component_matches: list[dict] | None = None,
 ) -> dict:
     """UI-confirmed Brevo send — bypasses draft generation, runs outreach_send only."""
+    from agents.outreach_agent.nodes import outreach_send
+
     ensure_galileo_initialized()
     question = "User confirmed send via UI"
     overrides: dict = {
@@ -140,13 +138,13 @@ def confirm_send(
 
 def get_graph_image() -> bytes | None:
     try:
-        return graph.get_graph().draw_mermaid_png()
+        return _get_graph().get_graph().draw_mermaid_png()
     except Exception:
         return None
 
 
 def get_graph_ascii() -> str:
     try:
-        return graph.get_graph().draw_ascii()
+        return _get_graph().get_graph().draw_ascii()
     except ImportError:
-        return graph.get_graph().draw_mermaid()
+        return _get_graph().get_graph().draw_mermaid()

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any
 from urllib.parse import urlparse
@@ -23,8 +23,9 @@ from services.salesforce_mcp import (
     salesforce_backend,
 )
 
-_LEAD_FIELDS = ["Id", "Name", "Email", "Company", "Title", "Status"]
+_LEAD_FIELDS = ["Id", "Name", "Email", "Company", "Title", "Status", "LastActivityDate", "LastModifiedDate", "CreatedDate"]
 _CONTACT_FIELDS = ["Id", "Name", "Email", "Title"]
+_OUTREACH_EMAIL_TASK_PREFIX = "Email sent:"
 
 
 def is_salesforce_configured() -> bool:
@@ -165,6 +166,105 @@ def _run_dml(operation: str, object_name: str, record: dict[str, Any]) -> None:
 
 # --- High-level CRM operations (written once) --------------------------------
 
+def fetch_record_by_id(record_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Load a Lead or Contact by Salesforce Id."""
+    safe_id = _escape_soql(record_id.strip())
+    if not safe_id:
+        return None, None
+    for obj, fields in (("Lead", _LEAD_FIELDS), ("Contact", _CONTACT_FIELDS)):
+        rows = _run_query(obj, fields, f"Id = '{safe_id}'", limit=1)
+        if rows:
+            rows[0]["_ObjectType"] = obj
+            return rows[0], obj
+    return None, None
+
+
+def _soql_datetime(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _attach_outreach_task(record: dict[str, Any], task: dict[str, Any], obj: str) -> dict[str, Any]:
+    record["_ObjectType"] = obj
+    record["_LastEmailSubject"] = (task.get("Subject") or "").replace(
+        _OUTREACH_EMAIL_TASK_PREFIX, "", 1
+    ).strip()
+    record["_LastEmailAt"] = task.get("CreatedDate") or ""
+    return record
+
+
+def fetch_leads_from_recent_outreach(limit: int = 10) -> list[dict[str, Any]]:
+    """Leads or Contacts tied to the most recent agent-logged outreach email Tasks."""
+    limit = max(1, min(limit, 50))
+    prefix = _escape_soql(_OUTREACH_EMAIL_TASK_PREFIX)
+    tasks = _run_query(
+        "Task",
+        ["WhoId", "Subject", "CreatedDate"],
+        where=f"Subject LIKE '{prefix}%' AND WhoId != null",
+        order_by="CreatedDate DESC",
+        limit=min(limit * 8, 50),
+    )
+
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for task in tasks:
+        who_id = (task.get("WhoId") or "").strip()
+        if not who_id or who_id in seen:
+            continue
+        seen.add(who_id)
+        record, obj = fetch_record_by_id(who_id)
+        if not record:
+            continue
+        results.append(_attach_outreach_task(record, task, obj))
+        if len(results) >= limit:
+            break
+    return results
+
+
+def fetch_leads_in_time_window(minutes: int, limit: int = 50) -> list[dict[str, Any]]:
+    """Leads with outreach email Tasks or record changes within the last N minutes."""
+    minutes = max(1, min(minutes, 7 * 24 * 60))
+    limit = max(1, min(limit, 50))
+    since = _soql_datetime(datetime.now(timezone.utc) - timedelta(minutes=minutes))
+    prefix = _escape_soql(_OUTREACH_EMAIL_TASK_PREFIX)
+
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    tasks = _run_query(
+        "Task",
+        ["WhoId", "Subject", "CreatedDate"],
+        where=f"CreatedDate >= {since} AND Subject LIKE '{prefix}%' AND WhoId != null",
+        order_by="CreatedDate DESC",
+        limit=min(limit * 8, 50),
+    )
+    for task in tasks:
+        who_id = (task.get("WhoId") or "").strip()
+        if not who_id or who_id in seen:
+            continue
+        record, obj = fetch_record_by_id(who_id)
+        if not record or obj != "Lead":
+            continue
+        seen.add(who_id)
+        results.append(_attach_outreach_task(record, task, obj))
+        if len(results) >= limit:
+            return results
+
+    for row in _run_query(
+        "Lead",
+        _LEAD_FIELDS,
+        where=f"(CreatedDate >= {since} OR LastModifiedDate >= {since})",
+        order_by="LastModifiedDate DESC",
+        limit=limit,
+    ):
+        lead_id = (row.get("Id") or "").strip()
+        if lead_id and lead_id not in seen:
+            seen.add(lead_id)
+            results.append(row)
+        if len(results) >= limit:
+            break
+    return results[:limit]
+
+
 def find_person_by_email(email: str) -> tuple[dict[str, Any] | None, str | None]:
     """Return (record, 'Lead'|'Contact') for the most recent match, or (None, None)."""
     where = f"Email = '{_escape_soql(email.strip())}'"
@@ -174,6 +274,57 @@ def find_person_by_email(email: str) -> tuple[dict[str, Any] | None, str | None]
             rows[0]["_ObjectType"] = obj
             return rows[0], obj
     return None, None
+
+
+def _part_like_patterns(part_reference: str) -> list[str]:
+    ref = part_reference.strip().strip(".,;")
+    if not ref:
+        return []
+    patterns: list[str] = []
+    tokens = [t for t in re.split(r"[\s\-_/]+", ref) if t]
+    if len(tokens) >= 2:
+        patterns.append("%" + "%".join(_escape_soql(t) for t in tokens) + "%")
+    for variant in {ref, ref.replace("-", " "), ref.upper(), ref.replace("-", " ").upper()}:
+        collapsed = re.sub(r"\s+", " ", variant.strip())
+        if collapsed:
+            patterns.append(f"%{_escape_soql(collapsed)}%")
+    return list(dict.fromkeys(patterns))
+
+
+def find_leads_by_part_enquiry(part_reference: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Leads linked to Tasks (or Lead.Description) mentioning a part / SKU enquiry."""
+    limit = max(1, min(limit, 50))
+    seen: set[str] = set()
+    results: list[dict[str, Any]] = []
+
+    for pattern in _part_like_patterns(part_reference):
+        where = (
+            f"Id IN (SELECT WhoId FROM Task WHERE Description LIKE '{pattern}' AND WhoId != null)"
+        )
+        for row in _run_query("Lead", _LEAD_FIELDS, where, "LastModifiedDate DESC", limit):
+            lead_id = row.get("Id")
+            if lead_id and lead_id not in seen:
+                seen.add(lead_id)
+                results.append(row)
+            if len(results) >= limit:
+                return results
+
+    for pattern in _part_like_patterns(part_reference):
+        for row in _run_query(
+            "Lead",
+            _LEAD_FIELDS,
+            f"Description LIKE '{pattern}'",
+            "LastModifiedDate DESC",
+            limit,
+        ):
+            lead_id = row.get("Id")
+            if lead_id and lead_id not in seen:
+                seen.add(lead_id)
+                results.append(row)
+            if len(results) >= limit:
+                return results
+
+    return results[:limit]
 
 
 def search_leads_and_contacts(

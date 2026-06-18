@@ -1,18 +1,21 @@
-"""CRM Agent — owns Salesforce data operations (reads, aggregates, record DML, schema).
-
-Routed to whenever the supervisor classifies a message as CRM/Salesforce work.
-
-  crm_research  → fast-path table for simple lead fetches, else an LLM tool loop
-  crm_generate  → formats tool output into a final answer (passthrough for fast path)
-"""
+"""CRM Agent — owns Salesforce data operations (reads, aggregates, record DML, schema)."""
 
 import logging
-import re
 
 from langchain_core.runnables import RunnableConfig
 
 from agents.state import AgentState
-from agents.chat import build_turn_context
+from agents.chat import (
+    build_turn_context,
+    extract_part_reference,
+    infer_leads_limit,
+    is_leads_by_part_enquiry,
+    is_leads_time_window_fetch,
+    is_recent_leads_list_fetch,
+    is_simple_leads_fetch,
+    is_singular_lead_fetch,
+    parse_leads_time_window_minutes,
+)
 from agents.tools import (
     call_tools,
     salesforce_query_records,
@@ -25,12 +28,14 @@ from agents.tools import (
 )
 from llm import get_llm
 from observability import merge_node_config
-
-try:
-    from services.salesforce_client import is_salesforce_configured
-except ImportError:
-    def is_salesforce_configured() -> bool:
-        return False
+from services.salesforce_repository import (
+    fetch_latest_leads,
+    fetch_leads_for_time_window,
+    fetch_recent_outreach_recipients,
+    find_leads_by_part_enquiry,
+    format_leads_markdown,
+    is_salesforce_configured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,83 +49,6 @@ _CRM_TOOLS = [
     salesforce_describe_object,
 ]
 
-# Read verbs that justify the deterministic "latest leads" table fast-path.
-_READ_VERB_RE = re.compile(
-    r"\b(fetch|get|show|list|latest|recent|last|pull|retrieve|display|view|see|give me)\b",
-    re.IGNORECASE,
-)
-# Write/advanced signals: if present, do NOT use the fast-path — run the tool loop instead.
-_WRITE_OR_ADVANCED_RE = re.compile(
-    r"\b(soql|aggregate|count|sum|average|group by|describe|object|"
-    r"contact|account|opportunity|case|update|delete|insert|create|upsert|save|add|log|new)\b",
-    re.IGNORECASE,
-)
-
-
-def _is_simple_leads_fetch(text: str) -> bool:
-    """Only a read-style 'list leads' request (no writes/advanced ops) uses the table fast-path."""
-    if _WRITE_OR_ADVANCED_RE.search(text):
-        return False
-    if not re.search(r"\blead", text, re.IGNORECASE):
-        return False
-    return bool(_READ_VERB_RE.search(text))
-
-
-_SINGULAR_LEAD_RE = re.compile(
-    r"\b(?:the\s+)?(?:last|latest|newest|most recent)\s+lead\b",
-    re.IGNORECASE,
-)
-_COUNT_LEADS_RE = re.compile(
-    r"\b(?:last|latest|recent|top|first)\s+(\d+)\s+leads?\b",
-    re.IGNORECASE,
-)
-
-
-def _infer_leads_limit(text: str) -> int:
-    """Parse how many leads the user asked for; default 10 for generic plural requests."""
-    if _SINGULAR_LEAD_RE.search(text):
-        return 1
-    count_match = _COUNT_LEADS_RE.search(text) or re.search(r"\b(\d+)\s+leads?\b", text, re.IGNORECASE)
-    if count_match:
-        return max(1, min(int(count_match.group(1)), 50))
-    if re.search(r"\bleads\b", text, re.IGNORECASE):
-        return 10
-    return 1
-
-
-def _fetch_latest_leads(limit: int = 10) -> str:
-    return salesforce_query_records.invoke({
-        "object_name": "Lead",
-        "fields": ["Id", "Name", "Email", "Company", "Title", "Status", "CreatedDate"],
-        "order_by": "CreatedDate DESC",
-        "limit": limit,
-    })
-
-
-def _format_leads_markdown(raw: str, *, limit: int = 10) -> str:
-    from services.salesforce_mcp import parse_query_records
-
-    rows = parse_query_records(raw)
-    if not rows:
-        return "No leads found in Salesforce."
-
-    heading = "## Latest Salesforce Lead" if limit == 1 else "## Latest Salesforce Leads"
-    lines = [
-        heading,
-        "",
-        "| Name | Email | Company | Title | Status |",
-        "| --- | --- | --- | --- | --- |",
-    ]
-    for row in rows:
-        def cell(key: str) -> str:
-            val = row.get(key, "")
-            return "" if val in (None, "null", "None") else str(val)
-
-        lines.append(
-            f"| {cell('Name')} | {cell('Email')} | {cell('Company')} | {cell('Title')} | {cell('Status')} |"
-        )
-    return "\n".join(lines)
-
 
 def crm_research(state: AgentState, config: RunnableConfig | None = None) -> dict:
     turn = build_turn_context(state)
@@ -133,15 +61,80 @@ def crm_research(state: AgentState, config: RunnableConfig | None = None) -> dic
             "steps": ["CRM Research → blocked (not configured)"],
         }
 
-    # Fast-path decision uses the CURRENT message only (history would falsely trigger it).
-    if _is_simple_leads_fetch(question):
-        try:
-            limit = _infer_leads_limit(question)
-            raw = _fetch_latest_leads(limit=limit)
+    if is_leads_by_part_enquiry(question):
+        part_ref = extract_part_reference(question)
+        if not part_ref:
             return {
-                "context": raw,
-                "answer": _format_leads_markdown(raw, limit=limit),
-                "steps": [f"CRM Research → fast-path leads fetch (limit={limit})"],
+                "context": "",
+                "answer": (
+                    "Please include the part number or SKU (e.g. `Part No. LED-RED-5MM`) "
+                    "so I can search lead enquiry history in Salesforce."
+                ),
+                "steps": ["CRM Research → part enquiry query missing part reference"],
+            }
+        try:
+            rows = find_leads_by_part_enquiry(part_ref, limit=50)
+            heading = f"## Leads who enquired about {part_ref}"
+            if not rows:
+                answer = (
+                    f"No Salesforce leads found with enquiry activity for **{part_ref}**.\n\n"
+                    "Enquiries are logged on **Task** records when outreach emails mention a product/part. "
+                    "Try a slightly different spelling (e.g. `LED 5MM RED` vs `LED-RED-5MM`)."
+                )
+            else:
+                answer = format_leads_markdown(rows, limit=len(rows), heading=heading)
+            return {
+                "context": str(rows),
+                "answer": answer,
+                "steps": [f"CRM Research → part enquiry leads ({part_ref}, {len(rows)} found)"],
+            }
+        except Exception as exc:
+            return {
+                "context": "",
+                "answer": f"Could not search leads by part enquiry: {exc}",
+                "steps": [f"CRM Research → part enquiry failed ({exc})"],
+            }
+
+    if is_leads_time_window_fetch(question) or is_simple_leads_fetch(question):
+        try:
+            limit = infer_leads_limit(question)
+            window_minutes = parse_leads_time_window_minutes(question)
+
+            if window_minutes is not None:
+                rows = fetch_leads_for_time_window(window_minutes, limit=limit)
+                unit = (
+                    f"{window_minutes} minutes"
+                    if window_minutes < 60
+                    else f"{window_minutes // 60} hour(s)"
+                    if window_minutes < 24 * 60
+                    else f"{window_minutes // (24 * 60)} day(s)"
+                )
+                heading = f"## CRM leads (last {unit})"
+                step = f"CRM Research → leads in time window ({unit}, limit={limit})"
+            elif is_singular_lead_fetch(question):
+                rows = fetch_recent_outreach_recipients(limit=limit)
+                if not rows:
+                    rows = fetch_latest_leads(limit=limit)
+                heading = (
+                    "## Last outreach recipient"
+                    if limit == 1
+                    else "## Recent outreach recipients"
+                )
+                step = f"CRM Research → last outreach recipient (limit={limit})"
+            elif is_recent_leads_list_fetch(question):
+                rows = fetch_recent_outreach_recipients(limit=limit)
+                if not rows:
+                    rows = fetch_latest_leads(limit=limit)
+                heading = "## Recent CRM leads (by last outreach activity)"
+                step = f"CRM Research → recent outreach leads (limit={limit})"
+            else:
+                rows = fetch_latest_leads(limit=limit)
+                heading = None
+                step = f"CRM Research → fast-path leads fetch (limit={limit})"
+            return {
+                "context": str(rows),
+                "answer": format_leads_markdown(rows, limit=limit, heading=heading),
+                "steps": [step],
             }
         except Exception as exc:
             return {
@@ -156,7 +149,10 @@ def crm_research(state: AgentState, config: RunnableConfig | None = None) -> dic
         config=config,
         system_prompt=(
             "You are a Salesforce CRM specialist. Use the Salesforce tools to fulfill the user's request.\n"
-            "- Read/list records: salesforce_query_records (for latest leads use objectName Lead, orderBy CreatedDate DESC; use limit=1 when user asks for the last/latest/most recent lead only)\n"
+            "- Read/list records: salesforce_query_records (for latest leads use objectName Lead, orderBy LastModifiedDate DESC; for recent outreach use logged Email sent Tasks)\n"
+            "- Product/part enquiries are stored on Task.Description (field 'Products / Parts') linked via WhoId to Lead/Contact. "
+            "For 'leads who enquired about part X', query Task with whereClause Description LIKE '%part tokens%' "
+            "then query Lead WHERE Id IN (those WhoIds), or use Lead Description LIKE as a fallback.\n"
             "- Counts/grouping: salesforce_aggregate_query\n"
             "- Create/update/delete records: salesforce_dml_records (or salesforce_upsert_lead for leads)\n"
             "- Inspect schema: salesforce_describe_object, salesforce_search_objects\n"
@@ -167,7 +163,6 @@ def crm_research(state: AgentState, config: RunnableConfig | None = None) -> dic
 
 
 def crm_generate(state: AgentState, config: RunnableConfig | None = None) -> dict:
-    # Fast path already produced a final answer (e.g. the leads table).
     if state.get("answer"):
         return {"steps": ["CRM Generate → passthrough"]}
 

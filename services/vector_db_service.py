@@ -1,4 +1,4 @@
-from vector_db import add_documents, add_chunks, get_document_count, list_sources, delete_by_source, reindex_source
+from vector_db import add_documents, add_chunks, get_document_count, list_sources, delete_by_source, reindex_source, search_kb_hits
 from vector_db.component_store import (
     delete_component_image,
     get_component_count,

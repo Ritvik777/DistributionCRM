@@ -28,5 +28,9 @@ class SendIntentDecision(BaseModel):
 
 class LeadsGateDecision(BaseModel):
     path: Literal["leads", "content"] = Field(
-        description="leads to find new prospects (Apollo); content to write marketing copy"
+        description=(
+            "leads to find NEW prospects via Apollo (net-new research); "
+            "content to write emails, posts, or marketing copy. "
+            "Existing Salesforce CRM lookups are handled by the CRM agent — not this gate."
+        )
     )

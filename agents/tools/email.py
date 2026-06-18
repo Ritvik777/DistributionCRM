@@ -1,11 +1,11 @@
 import base64
 import logging
-import os
 from pathlib import Path
 
 import requests
 from langchain_core.tools import tool
 
+from config import BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME
 from observability import log_span
 
 logger = logging.getLogger(__name__)
@@ -20,15 +20,15 @@ def deliver_brevo_email(
     attachment_urls: list[tuple[str, str]] | None = None,
 ) -> str:
     """Send via Brevo REST API. attachment_urls: list of (https_url, filename)."""
-    api_key = os.getenv("BREVO_API_KEY")
+    api_key = BREVO_API_KEY
     if not api_key or api_key == "your-brevo-api-key-here":
         return "ERROR: BREVO_API_KEY not configured in .env"
 
-    from_email = os.getenv("BREVO_FROM_EMAIL")
+    from_email = BREVO_FROM_EMAIL
     if not from_email or from_email == "you@yourcompany.com":
         return "ERROR: BREVO_FROM_EMAIL not configured in .env"
 
-    from_name = os.getenv("BREVO_FROM_NAME", "Product Marketing")
+    from_name = BREVO_FROM_NAME
     payload = {
         "sender": {"name": from_name, "email": from_email},
         "to": [{"email": to_email}],

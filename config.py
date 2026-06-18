@@ -30,3 +30,21 @@ VISION_RERANK_MODEL = os.getenv("VISION_RERANK_MODEL", VISION_MODEL)
 COMPONENT_RERANK_POOL = int(os.getenv("COMPONENT_RERANK_POOL", "3"))
 COMPONENT_CLIP_CANDIDATES = int(os.getenv("COMPONENT_CLIP_CANDIDATES", "8"))
 COMPONENT_IMAGE_PUBLIC_BASE_URL = os.getenv("COMPONENT_IMAGE_PUBLIC_BASE_URL", "")
+CATALOG_IMAGE_TEMP_UPLOAD = os.getenv("CATALOG_IMAGE_TEMP_UPLOAD", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+# Email (Brevo)
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+BREVO_FROM_EMAIL = os.getenv("BREVO_FROM_EMAIL", "")
+BREVO_FROM_NAME = os.getenv("BREVO_FROM_NAME", "Product Distribution Team")
+
+# Apollo
+APOLLO_API_KEY = os.getenv("APOLLO_API_KEY", "")
+
+# Galileo UI
+GALILEO_DEBUG_URLS = os.getenv("GALILEO_DEBUG_URLS", "false").strip().lower() in {"1", "true", "yes", "on"}
+GALILEO_EVAL_MODE = os.getenv("GALILEO_EVAL_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+# Salesforce (re-export for non-client callers)
+SALESFORCE_BACKEND = os.getenv("SALESFORCE_BACKEND", "")

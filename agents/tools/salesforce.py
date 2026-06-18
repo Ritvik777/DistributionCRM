@@ -67,24 +67,9 @@ def _python_query_records(
     order_by: str,
     limit: int,
 ) -> str:
-    from services.salesforce_client import get_salesforce_client
+    from services.salesforce_repository import query_records_as_text
 
-    soql = f"SELECT {', '.join(fields)} FROM {object_name}"
-    if where_clause:
-        soql += f" WHERE {where_clause}"
-    if order_by:
-        soql += f" ORDER BY {order_by}"
-    if limit:
-        soql += f" LIMIT {limit}"
-    result = get_salesforce_client().query(soql)
-    rows = result.get("records", [])
-    if not rows:
-        return "Query returned 0 records."
-    lines = []
-    for i, row in enumerate(rows, 1):
-        parts = [f" {f}: {row.get(f)}" for f in fields if f in row]
-        lines.append(f"Record {i}:\n" + "\n".join(parts))
-    return f"Query returned {len(rows)} records:\n\n" + "\n\n".join(lines)
+    return query_records_as_text(object_name, fields, where_clause, order_by, limit)
 
 
 @tool
