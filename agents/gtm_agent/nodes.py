@@ -17,7 +17,7 @@ EMAIL_PATTERN = r"[\w.+-]+@[\w-]+\.[\w.]+"
 
 def gtm_retrieve(state: AgentState, config: RunnableConfig | None = None) -> dict:
     turn = build_turn_context(state)
-    ctx, log = call_tools(
+    ctx, log, kb_sources = call_tools(
         turn,
         tools=[search_knowledge_base, web_search],
         config=config,
@@ -29,7 +29,11 @@ def gtm_retrieve(state: AgentState, config: RunnableConfig | None = None) -> dic
             "Do not call the same tool with the same arguments more than once."
         ),
     )
-    return {"context": ctx, "steps": [f"GTM Retrieve → {', '.join(log) or 'none'}"]}
+    return {
+        "context": ctx,
+        "kb_sources": kb_sources,
+        "steps": [f"GTM Retrieve → {', '.join(log) or 'none'}"],
+    }
 
 
 def pricing_gate(state: AgentState, config: RunnableConfig | None = None) -> dict:
@@ -92,7 +96,9 @@ def gtm_generate(state: AgentState, config: RunnableConfig | None = None) -> dic
         f"If the user asks to email, send, or market a product TO someone, reply briefly that outreach can handle that.\n"
         f"If the context lacks the needed market/competitor data (e.g. live web search returned nothing), "
         f"say you couldn't retrieve current market data right now — do NOT claim the question is unrelated.\n"
-        f"Only say a question is out of scope if it has nothing to do with products, pricing, market, or GTM.\n\n"
+        f"Only say a question is out of scope if it has nothing to do with products, pricing, market, or GTM.\n"
+        f"Ground every product fact in the Context below. If the Context does not contain the answer, "
+        f"say the knowledge base does not have that information — do not invent specs, prices, or stock levels.\n\n"
         f"Context:\n{state['context']}\n\n"
         f"{turn}\nAnswer:",
         config=merge_node_config(

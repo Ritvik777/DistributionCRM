@@ -113,7 +113,8 @@ def add_documents(texts: list[str], source: str = "", doc_type: str = "text") ->
     return add_chunks(chunks)
 
 
-def search_with_scores(query: str, top_k: int = 8) -> list[tuple[str, float]]:
+def search_kb_hits(query: str, top_k: int = 8, excerpt_len: int = 240) -> list[dict]:
+    """Hybrid search returning content plus source metadata for citations."""
     try:
         setup_collection()
         result = qdrant_client.query_points(
@@ -134,10 +135,34 @@ def search_with_scores(query: str, top_k: int = 8) -> list[tuple[str, float]]:
             limit=top_k,
             with_payload=True,
         )
-        return [(p.payload.get(CONTENT_KEY, ""), p.score) for p in result.points if p.payload]
+        hits: list[dict] = []
+        for point in result.points:
+            if not point.payload:
+                continue
+            text = (point.payload.get(CONTENT_KEY) or "").strip()
+            if not text:
+                continue
+            meta = point.payload.get(META_KEY) or {}
+            excerpt = text
+            if len(excerpt) > excerpt_len:
+                excerpt = excerpt[:excerpt_len].rsplit(" ", 1)[0] + "…"
+            hits.append(
+                {
+                    "source": meta.get("source") or "(unknown)",
+                    "type": meta.get("type") or "text",
+                    "score": round(float(point.score), 3),
+                    "content": text,
+                    "excerpt": excerpt,
+                }
+            )
+        return hits
     except Exception as exc:
         logger.warning("Qdrant search failed: %s", exc)
         return []
+
+
+def search_with_scores(query: str, top_k: int = 8) -> list[tuple[str, float]]:
+    return [(hit["content"], hit["score"]) for hit in search_kb_hits(query, top_k=top_k)]
 
 
 def get_document_count() -> int:

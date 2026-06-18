@@ -1,4 +1,5 @@
 import re
+import html
 import streamlit as st
 import os
 from uuid import uuid4
@@ -92,6 +93,29 @@ STYLE_BLOCK = """
         margin: 5px 0;
         border-radius: 0 8px 8px 0;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12.5px;
+    }
+    .kb-source {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin: 8px 0;
+        font-size: 13px;
+    }
+    .kb-source-title {
+        font-weight: 700;
+        color: var(--text-main);
+        margin-bottom: 4px;
+    }
+    .kb-source-meta {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 6px;
+    }
+    .kb-source-excerpt {
+        color: var(--text-main);
+        line-height: 1.5;
         font-size: 12.5px;
     }
     .hero-title { font-size: 30px; font-weight: 800; letter-spacing: -.5px; margin-bottom: 2px; }
@@ -199,6 +223,26 @@ def _render_trace(steps: list[str]) -> None:
         for index, step in enumerate(steps, start=1):
             st.markdown(
                 f'<div class="trace-step">Step {index}: {step}</div>',
+                unsafe_allow_html=True,
+            )
+
+
+def _render_kb_sources(sources: list[dict]) -> None:
+    if not sources:
+        return
+    with st.expander(f"📚 Knowledge base sources ({len(sources)})", expanded=False):
+        st.caption("Retrieved passages used to ground this answer. Verify facts against these excerpts.")
+        for index, source in enumerate(sources, start=1):
+            name = html.escape(source.get("source") or "(unknown)")
+            doc_type = html.escape(source.get("type") or "text")
+            score = source.get("score", 0)
+            excerpt = html.escape(source.get("excerpt") or "")
+            st.markdown(
+                f'<div class="kb-source">'
+                f'<div class="kb-source-title">{index}. {name}</div>'
+                f'<div class="kb-source-meta">{doc_type} · relevance score {score:.3f}</div>'
+                f'<div class="kb-source-excerpt">{excerpt}</div>'
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
@@ -445,6 +489,7 @@ def render_chat_history() -> None:
                 label, css_class = BADGES.get(agent_type, (agent_type, "badge-gtm"))
                 st.markdown(f'<span class="agent-badge {css_class}">{label}</span>', unsafe_allow_html=True)
             st.markdown(message["content"])
+            _render_kb_sources(message.get("kb_sources", []))
             _render_trace(message.get("trace", []))
 
 
@@ -482,6 +527,7 @@ def _push_assistant_message(result: dict) -> None:
             "content": result.get("answer", ""),
             "agent": result.get("agent_type", "gtm"),
             "trace": result.get("steps", []),
+            "kb_sources": result.get("kb_sources", []),
         }
     )
 
@@ -518,6 +564,7 @@ def handle_new_prompt(prompt: str) -> None:
         st.markdown(f'<span class="agent-badge {css_class}">{label}</span>', unsafe_allow_html=True)
         _show_galileo_debug_links_once()
         st.markdown(result.get("answer", ""))
+        _render_kb_sources(result.get("kb_sources", []))
         if result.get("send_intent") and not result.get("send_confirmed"):
             st.caption("💡 When you're happy with the draft, click **Confirm & Send Email** below.")
         _render_trace(result.get("steps", []))

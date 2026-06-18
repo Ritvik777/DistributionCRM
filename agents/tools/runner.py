@@ -2,6 +2,7 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
+from agents.tools.knowledge_base import begin_kb_collection, consume_kb_sources
 from llm import get_llm
 from observability import merge_node_config
 
@@ -9,13 +10,13 @@ from observability import merge_node_config
 # GalileoCallback (via gtm_retrieve/outreach_research nodes) logs LLM + tool calls;
 # no @log_span to avoid duplicate call_tools span (same work as gtm_retrieve).
 def call_tools(question, tools, system_prompt, config=None):
-    """LLM picks which tools to call, runs them, returns results.
-    Pass config from the graph so LLM/tool spans nest under the parent node."""
+    """LLM picks which tools to call, runs them, returns (context, tool_log, kb_sources)."""
+    begin_kb_collection()
     tool_map = {t.name: t for t in tools}
     try:
         llm = get_llm().bind_tools(tools)
     except Exception as exc:
-        return f"LLM_UNAVAILABLE: {exc}", []
+        return f"LLM_UNAVAILABLE: {exc}", [], consume_kb_sources()
     msgs = [SystemMessage(content=system_prompt), HumanMessage(content=question)]
 
     log = []
@@ -29,7 +30,7 @@ def call_tools(question, tools, system_prompt, config=None):
         try:
             resp = llm.invoke(msgs, config=invoke_config or None)
         except Exception as exc:
-            return f"LLM_ERROR: {exc}", log
+            return f"LLM_ERROR: {exc}", log, consume_kb_sources()
         msgs.append(resp)
         if not resp.tool_calls:
             break
@@ -57,4 +58,4 @@ def call_tools(question, tools, system_prompt, config=None):
             msgs.append(ToolMessage(content=str(out), tool_call_id=tc["id"]))
 
     context = "\n\n".join(m.content for m in msgs if isinstance(m, ToolMessage))
-    return context or "No context found.", log
+    return context or "No context found.", log, consume_kb_sources()

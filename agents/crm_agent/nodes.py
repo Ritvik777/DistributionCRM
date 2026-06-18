@@ -126,7 +126,7 @@ def crm_research(state: AgentState, config: RunnableConfig | None = None) -> dic
                 "steps": [f"CRM Research → fast-path failed ({exc})"],
             }
 
-    ctx, log = call_tools(
+    ctx, log, _kb_sources = call_tools(
         turn,
         tools=_CRM_TOOLS,
         config=config,

@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     agent_type: str
     context: str
     answer: str
+    kb_sources: list[dict]
     is_pricing: bool
     user_email: str
     send_intent: bool

@@ -18,6 +18,7 @@ from agents.tools import (
     salesforce_search_leads,
     salesforce_query_records,
 )
+from agents.tools.knowledge_base import begin_kb_collection, consume_kb_sources
 from observability import merge_node_config
 
 try:
@@ -186,7 +187,7 @@ def _wants_salesforce_leads(text: str) -> bool:
     return bool(_SF_PLATFORM_RE.search(text) and re.search(r"\blead", text, re.IGNORECASE))
 
 
-def _salesforce_leads_context(turn: str, limit: int = 10) -> tuple[str, int]:
+def _salesforce_leads_context(turn: str, limit: int = 10) -> tuple[str, int, list[dict]]:
     """Pull leads (with emails) from Salesforce + product info, formatted for per-lead email drafting."""
     from services.salesforce_mcp import parse_query_records
 
@@ -209,13 +210,15 @@ def _salesforce_leads_context(turn: str, limit: int = 10) -> tuple[str, int]:
     if not leads:
         return "", 0
 
+    begin_kb_collection()
     product_info = search_knowledge_base.invoke({"query": turn[:500]})
+    kb_sources = consume_kb_sources()
     block = (
         f"Found {len(leads)} leads from Salesforce CRM:\n\n"
         + "\n\n".join(leads)
         + f"\n\nProduct info:\n{product_info}"
     )
-    return block, len(leads)
+    return block, len(leads), kb_sources
 
 
 def outreach_research(state: AgentState, config: RunnableConfig | None = None) -> dict:
@@ -224,10 +227,11 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
 
     # Cross-agent flow: "email the leads from Salesforce" → source recipients from CRM, then draft per lead.
     if is_salesforce_configured() and _wants_salesforce_leads(question):
-        block, count = _salesforce_leads_context(turn)
+        block, count, kb_sources = _salesforce_leads_context(turn)
         if count:
             return {
                 "context": block,
+                "kb_sources": kb_sources,
                 "steps": [f"Outreach Research → {count} leads from Salesforce + KB"],
             }
 
@@ -241,7 +245,7 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
             sf_hint = (
                 "3. Call salesforce_search_leads to check CRM and avoid duplicating existing contacts\n\n"
             )
-        ctx, log = call_tools(
+        ctx, log, kb_sources = call_tools(
             turn,
             tools=tools,
             config=config,
@@ -263,7 +267,7 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
                 "If the user mentions a recipient email or company, call salesforce_query_records or "
                 "salesforce_search_leads first to pull existing Lead/Contact context from CRM.\n"
             )
-        ctx, log = call_tools(
+        ctx, log, kb_sources = call_tools(
             turn,
             tools=content_tools,
             config=config,
@@ -277,7 +281,11 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
         )
         path_label = "content"
 
-    return {"context": ctx, "steps": [f"Outreach Research({source}) → {path_label}, {', '.join(log) or 'none'}"]}
+    return {
+        "context": ctx,
+        "kb_sources": kb_sources,
+        "steps": [f"Outreach Research({source}) → {path_label}, {', '.join(log) or 'none'}"],
+    }
 
 
 def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -> dict:

@@ -30,6 +30,7 @@ def _base_state(
         "agent_type": "",
         "context": "",
         "answer": "",
+        "kb_sources": [],
         "is_pricing": False,
         "user_email": "",
         "send_intent": False,
