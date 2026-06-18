@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Product Marketing — Multi-Agent RAG with Observations & Evals</title>
-  <meta name="description" content="Technical walkthrough of the Product Marketing multi-agent architecture, state flow, tools, graph routing, and evaluation framework.">
+  <title>Product Distribution Agent — Multi-Agent RAG with Observations & Evals</title>
+  <meta name="description" content="Technical walkthrough of the Product Distribution Agent: LangGraph routing, component vision catalog, Salesforce CRM, outreach, Galileo tracing, and evaluations.">
   <style>
     @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
 
@@ -385,17 +385,19 @@
   <main class="container">
     <section class="hero">
       <div class="eyebrow">Technical Walkthrough</div>
-      <h1>Product Marketing — Multi-Agent RAG with Observations & Evals</h1>
-      <p class="lead">Technical documentation for a LangGraph multi-agent platform covering architecture, routing, state, integrations, observability, and evaluation.</p>
+      <h1>Product Distribution Agent — Multi-Agent RAG with Observations & Evals</h1>
+      <p class="lead">Technical documentation for a LangGraph multi-agent platform: catalog lookup, component vision matching, outreach email, Salesforce CRM, observability, and evaluation.</p>
       <p class="hero-intro">
         A supervisor routes each request to one of three specialists—<strong>GTM</strong>, <strong>Outreach</strong>, or <strong>CRM</strong>—each backed by its own LangGraph branch.
-        Downstream nodes retrieve context, call external tools, and enforce business rules such as pricing verification and send confirmation before returning a response.
+        The UI can attach component photos; hybrid vision (CLIP + Claude re-rank + text KB) verifies parts against a catalog before GTM or outreach answers.
+        Downstream nodes retrieve context, call external tools, and enforce business rules such as pricing verification and UI-confirmed send before returning a response.
         Execution is fully traced with <strong>Galileo</strong> for debugging, monitoring, and quality evaluation.
       </p>
       <div class="chip-row">
         <span class="chip">LangGraph</span>
         <span class="chip">Router + GTM + Outreach + CRM</span>
-        <span class="chip">Qdrant Cloud Inference</span>
+        <span class="chip">Qdrant Hybrid RAG</span>
+        <span class="chip">CLIP + Claude Vision</span>
         <span class="chip">Anthropic LLM</span>
         <span class="chip">Salesforce MCP</span>
         <span class="chip">Galileo Tracing + Evals</span>
@@ -404,9 +406,11 @@
 
     <nav class="toc" aria-label="Quick section navigation">
       <div class="toc-row">
+        <a href="#layers">Layers</a>
         <a href="#stack">Stack</a>
         <a href="#graph">Graph</a>
         <a href="#state">State</a>
+        <a href="#vision">Vision</a>
         <a href="#examples">Examples</a>
       </div>
     </nav>
@@ -414,7 +418,7 @@
     <section class="kpi-grid" aria-label="stats">
       <article class="kpi"><strong>4</strong><span>Agent roles</span></article>
       <article class="kpi"><strong>11</strong><span>LangGraph nodes</span></article>
-      <article class="kpi"><strong>11</strong><span>Tools</span></article>
+      <article class="kpi"><strong>10</strong><span>LangChain tools</span></article>
       <article class="kpi"><strong>10</strong><span>Eval prompts</span></article>
     </section>
 
@@ -422,67 +426,90 @@
       <h2>Step 1: Architecture Overview</h2>
       <p>The assistant behaves like a small team with one coordinator and three specialists:</p>
       <ul>
-        <li><strong>Supervisor Routing Agent:</strong> reads the user request and picks the best branch (keyword fast-path on the current message + an LLM 3-way classifier).</li>
-        <li><strong>GTM Agent:</strong> handles product, features, comparisons, and pricing logic (pricing gated behind email verification).</li>
-        <li><strong>Outreach Agent:</strong> handles content generation, lead research (Apollo or Salesforce), and confirmed email sending — then auto-logs the activity in Salesforce.</li>
-        <li><strong>CRM Agent:</strong> handles Salesforce work — fetch/list records, SOQL + aggregate queries, record create/update/delete, and describe objects.</li>
+        <li><strong>Supervisor Routing Agent:</strong> reads the user request and picks the best branch (keyword fast-path on the current message + LLM 3-way classifier with CRM/outreach overrides).</li>
+        <li><strong>GTM Agent:</strong> product catalog, specs, stock, and pricing (pricing gated behind email verification). Supports component photo verification via hybrid CLIP + vision re-rank.</li>
+        <li><strong>Outreach Agent:</strong> formal B2B email drafts, Apollo net-new lead research, Salesforce lead pull for batch outreach, UI-confirmed Brevo send with catalog images — then auto-logs a Salesforce Task.</li>
+        <li><strong>CRM Agent:</strong> Salesforce reads, aggregates, DML, schema describe — with fast-path Markdown tables for common lead queries (no LLM tool loop).</li>
       </ul>
-      <p>All branches use one shared state object, so every node updates the same request context consistently.</p>
+      <p>Runtime layers: <span class="mono">app.py</span> → <span class="mono">ui/</span> → <span class="mono">services/</span> (adapters) → <span class="mono">agents/</span> (LangGraph + tools) → <span class="mono">vector_db/</span> + <span class="mono">services/salesforce_*</span>. All branches share one <span class="mono">AgentState</span>.</p>
+    </section>
+
+    <section class="section anchor-target" id="layers">
+      <h2>Step 2: Layered Architecture</h2>
+      <table>
+        <thead><tr><th>Layer</th><th>Key paths</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td>Entry</td><td><span class="mono">app.py</span>, <span class="mono">config.py</span>, <span class="mono">llm.py</span></td><td>Streamlit boot, env loading, Anthropic model factories (chat + vision caption/rerank).</td></tr>
+          <tr><td>UI</td><td><span class="mono">ui/ui.py</span>, <span class="mono">ui/component_vision.py</span></td><td>Chat, sidebar uploads, image attach, catalog match panels, send confirmation, Galileo session start.</td></tr>
+          <tr><td>Services</td><td><span class="mono">services/*</span></td><td>Thin adapters: agent calls, conversation session helpers, vector DB uploads, component matching, Salesforce client/repository/MCP, catalog image hosting for email.</td></tr>
+          <tr><td>Agents</td><td><span class="mono">agents/graph.py</span>, <span class="mono">agents/*_agent/nodes.py</span>, <span class="mono">agents/tools/</span></td><td>LangGraph orchestration, routing/intent, branch nodes, shared tool-routing loop.</td></tr>
+          <tr><td>Data</td><td><span class="mono">vector_db/</span>, <span class="mono">data/components/</span></td><td>Qdrant text KB (hybrid dense+BM25), CLIP component catalog collection, chunking, Claude vision caption/rerank.</td></tr>
+          <tr><td>Observability</td><td><span class="mono">observability/galileo.py</span>, <span class="mono">evals/</span></td><td>Galileo traces/sessions; eval harness reuses production <span class="mono">ask()</span>.</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <section class="section">
-      <h2>Step 2: Project Map (What Each File Does)</h2>
+      <h2>Step 3: Project Map (What Each File Does)</h2>
       <table>
         <thead><tr><th>File</th><th>What it does</th></tr></thead>
         <tbody>
-          <tr><td><span class="mono">app.py</span></td><td>Main Streamlit entrypoint that boots the UI and wires sidebar + chat loop.</td></tr>
-          <tr><td><span class="mono">ui/ui.py</span></td><td>UI behavior: styles, upload widgets, chat history rendering, prompt handling, and trace display.</td></tr>
-          <tr><td><span class="mono">services/agent_service.py</span></td><td>Service adapter for `ask()`, `load_graph_image()` (PNG), and `load_graph_ascii()` (fallback).</td></tr>
-          <tr><td><span class="mono">services/vector_db_service.py</span></td><td>Thin service wrapper for adding docs/PDFs and checking vector DB counts.</td></tr>
-          <tr><td><span class="mono">agents/__init__.py</span></td><td>Main runtime API (`ask`), `get_graph_image()` (PNG), `get_graph_ascii()` (fallback when PNG fails).</td></tr>
-          <tr><td><span class="mono">agents/graph.py</span></td><td>Defines LangGraph nodes and all edges/conditional routes.</td></tr>
-          <tr><td><span class="mono">agents/state.py</span></td><td>Shared `AgentState` schema and `steps` merge behavior across nodes.</td></tr>
-          <tr><td><span class="mono">agents/router_agent/nodes.py</span></td><td>Intent classification (`gtm` / `outreach` / `crm`) — keyword fast-path + LLM 3-way classifier with overrides.</td></tr>
-          <tr><td><span class="mono">agents/gtm_agent/nodes.py</span></td><td>GTM branch: retrieve context, pricing gate, email gate, final GTM generation.</td></tr>
-          <tr><td><span class="mono">agents/outreach_agent/nodes.py</span></td><td>Outreach branch: research (Apollo or Salesforce leads), draft generation, send gate, confirmed Brevo send + CRM activity logging.</td></tr>
-          <tr><td><span class="mono">agents/crm_agent/nodes.py</span></td><td>CRM branch: <span class="mono">crm_research</span> (Salesforce tool loop / fast-path leads table) and <span class="mono">crm_generate</span>.</td></tr>
-          <tr><td><span class="mono">agents/tools/</span></td><td>Tools split by concern: <span class="mono">knowledge_base</span> (Qdrant), <span class="mono">web</span> (DuckDuckGo/ddgs), <span class="mono">apollo</span> (Apollo), <span class="mono">salesforce</span> (query/dml/aggregate/describe), <span class="mono">email</span> (Brevo), and <span class="mono">runner</span> (tool-calling loop).</td></tr>
-          <tr><td><span class="mono">services/salesforce_client.py</span></td><td>CRM operations behind two backend primitives (MCP server or simple-salesforce), with session auto-recovery.</td></tr>
-          <tr><td><span class="mono">services/salesforce_mcp.py</span></td><td>Python MCP client that spawns the TypeScript Salesforce MCP server over stdio.</td></tr>
-          <tr><td><span class="mono">vector_db/database.py</span></td><td>Qdrant client setup, collection validation, add/search/count methods.</td></tr>
-          <tr><td><span class="mono">vector_db/chunker.py</span></td><td>Text chunking and PDF/Excel/CSV extraction for indexing documents.</td></tr>
-          <tr><td><span class="mono">llm.py</span></td><td>Anthropic LLM loader with config/env validation.</td></tr>
-          <tr><td><span class="mono">config.py</span></td><td>Central configuration and environment variable loading.</td></tr>
-          <tr><td><span class="mono">observability/galileo.py</span></td><td>Galileo SDK integration: init, callbacks, spans, sessions, logger helpers.</td></tr>
-          <tr><td><span class="mono">evals/run_galileo_evals.py</span></td><td>Evaluation harness with sessions mode, experiment mode, and coverage checks.</td></tr>
-          <tr><td><span class="mono">evals/README.md</span></td><td>Eval-specific usage guide, criteria, and Galileo integration notes.</td></tr>
-          <tr><td><span class="mono">README.md</span></td><td>Top-level architecture, setup/run steps, and project navigation docs.</td></tr>
+          <tr><td><span class="mono">app.py</span></td><td>Streamlit entry: styles, session init, sidebar, chat loop, send confirmation.</td></tr>
+          <tr><td><span class="mono">ui/ui.py</span></td><td>Full chat UI — uploads, composer with image attach, agent calls, trace/KB source rendering.</td></tr>
+          <tr><td><span class="mono">ui/component_vision.py</span></td><td>Catalog match panel HTML (confidence bars, side-by-side photo compare).</td></tr>
+          <tr><td><span class="mono">services/agent_service.py</span></td><td>UI adapter for <span class="mono">ask()</span>, <span class="mono">confirm_send()</span>, graph PNG/ASCII.</td></tr>
+          <tr><td><span class="mono">services/conversation_service.py</span></td><td>Chat history, pricing-email rewrite, pending draft/session updates (Streamlit-agnostic).</td></tr>
+          <tr><td><span class="mono">services/vector_db_service.py</span></td><td>Facade for doc/PDF/Excel/CSV indexing and component catalog CRUD + match.</td></tr>
+          <tr><td><span class="mono">services/component_match_service.py</span></td><td>Shared hybrid component image match + KB citation formatting for agents/UI.</td></tr>
+          <tr><td><span class="mono">services/salesforce_client.py</span></td><td>Backend-agnostic CRM I/O (<span class="mono">_run_query</span> / <span class="mono">_run_dml</span>) via MCP or simple-salesforce.</td></tr>
+          <tr><td><span class="mono">services/salesforce_repository.py</span></td><td>Lead fetch/format helpers and Markdown tables for CRM fast-paths.</td></tr>
+          <tr><td><span class="mono">services/salesforce_mcp.py</span></td><td>Spawns TypeScript MCP server over stdio; parses query text to dicts.</td></tr>
+          <tr><td><span class="mono">services/catalog_image_host.py</span></td><td>Public HTTPS URLs for catalog photos in Brevo HTML emails (CDN or temp upload).</td></tr>
+          <tr><td><span class="mono">agents/__init__.py</span></td><td>Public API: <span class="mono">ask()</span>, <span class="mono">confirm_send()</span>, Galileo trace wrap, lazy graph load.</td></tr>
+          <tr><td><span class="mono">agents/graph.py</span></td><td>LangGraph node wiring and conditional edges (GTM / Outreach / CRM).</td></tr>
+          <tr><td><span class="mono">agents/state.py</span></td><td><span class="mono">AgentState</span> schema; merged <span class="mono">steps</span> trace reducer.</td></tr>
+          <tr><td><span class="mono">agents/intent.py</span></td><td>Regex intent + CRM fast-path eligibility; chat history formatting.</td></tr>
+          <tr><td><span class="mono">agents/schemas.py</span></td><td>Pydantic models for structured routing/gate LLM outputs.</td></tr>
+          <tr><td><span class="mono">agents/router_agent/nodes.py</span></td><td>Supervisor: keyword fast-path + 3-way LLM classify with overrides.</td></tr>
+          <tr><td><span class="mono">agents/gtm_agent/nodes.py</span></td><td>Retrieve (KB/web or component match), pricing gate, email gate, generate.</td></tr>
+          <tr><td><span class="mono">agents/outreach_agent/nodes.py</span></td><td>Research, draft, send gate, Brevo send + Salesforce Task logging.</td></tr>
+          <tr><td><span class="mono">agents/outreach_agent/email_html.py</span></td><td>Formal B2B HTML email template with product table and catalog image block.</td></tr>
+          <tr><td><span class="mono">agents/crm_agent/nodes.py</span></td><td>CRM research (fast-path tables or Salesforce tool loop) + generate.</td></tr>
+          <tr><td><span class="mono">agents/tools/</span></td><td>KB, web, Apollo, Salesforce tools + <span class="mono">runner.call_tools</span> loop; <span class="mono">email.deliver_brevo_email</span> for send node.</td></tr>
+          <tr><td><span class="mono">vector_db/database.py</span></td><td>Qdrant text collection: hybrid dense+BM25 search, source management.</td></tr>
+          <tr><td><span class="mono">vector_db/component_store.py</span></td><td>CLIP image catalog collection + hybrid match pipeline.</td></tr>
+          <tr><td><span class="mono">vector_db/vision.py</span></td><td>Claude vision captioning and candidate re-ranking for component photos.</td></tr>
+          <tr><td><span class="mono">vector_db/chunker.py</span></td><td>Text chunking; PDF/Excel/CSV quotation row extraction.</td></tr>
+          <tr><td><span class="mono">observability/galileo.py</span></td><td>Galileo init, LangChain callbacks, spans, sessions, console links.</td></tr>
+          <tr><td><span class="mono">evals/run_galileo_evals.py</span></td><td>10-case eval suite: sessions mode, experiment mode, tool coverage.</td></tr>
         </tbody>
       </table>
     </section>
 
     <section class="section anchor-target" id="stack">
-      <h2>Step 3: Framework and Runtime Stack</h2>
+      <h2>Step 4: Framework and Runtime Stack</h2>
       <table>
         <thead>
           <tr><th>Layer</th><th>Technology</th><th>How it is used in this codebase</th></tr>
         </thead>
         <tbody>
-          <tr><td>Orchestration</td><td><span class="mono">LangGraph</span></td><td>Node graph in <span class="mono">agents/graph.py</span> with conditional edges for routing.</td></tr>
-          <tr><td>Generation LLM</td><td><span class="mono">ChatAnthropic</span></td><td>Used in supervisor routing, gates, and generation nodes via <span class="mono">llm.py</span>.</td></tr>
-          <tr><td>Embeddings</td><td><span class="mono">Qdrant Cloud Inference</span></td><td>Server-side hybrid dense (<span class="mono">all-MiniLM-L6-v2</span>) + sparse (BM25) vectors — no separate embedding API key.</td></tr>
-          <tr><td>Vector Store</td><td><span class="mono">Qdrant Cloud</span></td><td>Stores chunks and returns similarity-scored context for tool calls.</td></tr>
-          <tr><td>Web Research</td><td><span class="mono">DuckDuckGo (ddgs)</span></td><td><code>web_search</code> — live web for market/competitor context.</td></tr>
-          <tr><td>Leads + Email</td><td><span class="mono">Apollo</span> + <span class="mono">Brevo</span></td><td><code>apollo_search</code> (leads by job/industry), <code>send_email</code> (outreach send path).</td></tr>
-          <tr><td>CRM</td><td><span class="mono">Salesforce</span> via <span class="mono">MCP</span></td><td>TypeScript <a href="https://github.com/Ritvik777/mcp-server-salesforce">mcp-server-salesforce</a> over stdio (simple-salesforce fallback) for CRM reads, DML, and aggregates.</td></tr>
-          <tr><td>Observability</td><td><span class="mono">Galileo</span></td><td>Spans, traces, sessions, and experiment logging.</td></tr>
-          <tr><td>UI</td><td><span class="mono">Streamlit</span></td><td>Chat UX, graph preview (PNG with ASCII/Mermaid fallback), upload flow, and step trace display.</td></tr>
+          <tr><td>Orchestration</td><td><span class="mono">LangGraph</span></td><td>Node graph in <span class="mono">agents/graph.py</span> with conditional edges for routing, pricing, and send gates.</td></tr>
+          <tr><td>Generation LLM</td><td><span class="mono">ChatAnthropic</span></td><td>Routing, gates, and generation via <span class="mono">llm.py</span> (separate caption/rerank vision models).</td></tr>
+          <tr><td>Text RAG</td><td><span class="mono">Qdrant Cloud Inference</span></td><td>Hybrid dense (<span class="mono">all-MiniLM-L6-v2</span>) + sparse (BM25) — server-side, no local embedding API.</td></tr>
+          <tr><td>Component Vision</td><td><span class="mono">CLIP</span> + <span class="mono">Claude Vision</span></td><td><span class="mono">sentence-transformers</span> CLIP catalog vectors; Claude captions + re-ranks candidates; text KB corroboration.</td></tr>
+          <tr><td>Vector Store</td><td><span class="mono">Qdrant Cloud</span></td><td>Two collections: text KB (<span class="mono">Rama</span>) and component images (<span class="mono">Rama_components</span>).</td></tr>
+          <tr><td>Web Research</td><td><span class="mono">DuckDuckGo (ddgs)</span></td><td><code>web_search</code> tool for market/competitor context.</td></tr>
+          <tr><td>Leads</td><td><span class="mono">Apollo</span></td><td><code>apollo_search</code> for net-new prospect research in outreach.</td></tr>
+          <tr><td>Email</td><td><span class="mono">Brevo</span></td><td><span class="mono">deliver_brevo_email()</span> in outreach send path (formal HTML via <span class="mono">email_html.py</span>); UI must confirm before send.</td></tr>
+          <tr><td>CRM</td><td><span class="mono">Salesforce</span> via <span class="mono">MCP</span></td><td><a href="https://github.com/Ritvik777/mcp-server-salesforce">mcp-server-salesforce</a> over stdio; <span class="mono">simple-salesforce</span> REST fallback.</td></tr>
+          <tr><td>Observability</td><td><span class="mono">Galileo</span></td><td>Traces, sessions, experiment logging via LangChain callbacks.</td></tr>
+          <tr><td>UI</td><td><span class="mono">Streamlit</span></td><td>Chat, sidebar catalog uploads, image attach, match panels, pipeline trace, send button.</td></tr>
         </tbody>
       </table>
     </section>
 
     <section class="section anchor-target" id="graph">
-      <h2>Step 4: Node Graph (Current Runtime)</h2>
+      <h2>Step 5: Node Graph (Current Runtime)</h2>
       <div class="legend">
         <span><span class="dot" style="background:var(--purple);"></span>Node (function)</span>
         <span><span class="dot" style="background:var(--green);"></span>Edge (always)</span>
@@ -548,89 +575,120 @@
           <text class="edge-label" x="965" y="244">review</text>
         </svg>
       </div>
-      <p class="tiny">The graph is tree-shaped from a single classifier root, with conditional branch points for pricing and send intent. The Streamlit UI shows PNG when available; falls back to ASCII or Mermaid if Mermaid.INK is unreachable.</p>
+      <p class="tiny">The graph is tree-shaped from a single classifier root. Pricing and send gates are conditional branches. Actual email delivery requires UI <span class="mono">send_confirmed=true</span> (Send email button) — the graph's <span class="mono">send</span> edge only fires after that. Attached component photos route to GTM via keyword/image fast-path.</p>
     </section>
 
     <section class="section anchor-target" id="state">
-      <h2>Step 5: State Contract and How It Evolves</h2>
+      <h2>Step 6: State Contract and How It Evolves</h2>
       <table>
         <thead>
           <tr><th>State field</th><th>Who writes it</th><th>Purpose</th><th>Typical value</th></tr>
         </thead>
         <tbody>
-          <tr><td><span class="mono">question</span></td><td><span class="mono">ask()</span></td><td>Original user request</td><td>"What does this product cost?"</td></tr>
+          <tr><td><span class="mono">question</span></td><td><span class="mono">ask()</span></td><td>Original user request</td><td>"Do you have LED-RED-5MM?"</td></tr>
           <tr><td><span class="mono">chat_history</span></td><td><span class="mono">ask()</span> (from UI)</td><td>Recent turns for multi-turn context</td><td>list of role/content messages</td></tr>
           <tr><td><span class="mono">agent_type</span></td><td><span class="mono">classify</span></td><td>Branch selector</td><td><span class="mono">gtm</span> / <span class="mono">outreach</span> / <span class="mono">crm</span></td></tr>
-          <tr><td><span class="mono">context</span></td><td><span class="mono">gtm_retrieve</span> / <span class="mono">outreach_research</span> / <span class="mono">crm_research</span></td><td>Tool-generated evidence context</td><td>KB snippets, web notes, leads, CRM rows</td></tr>
+          <tr><td><span class="mono">context</span></td><td>retrieve / research nodes</td><td>Tool or match evidence for generation</td><td>KB snippets, leads, CRM rows, component match text</td></tr>
+          <tr><td><span class="mono">kb_sources</span></td><td>retrieve nodes / UI precompute</td><td>Citation metadata shown in UI</td><td>source, score, excerpt list</td></tr>
+          <tr><td><span class="mono">query_image_b64</span></td><td><span class="mono">ask()</span> (from UI attach)</td><td>User-uploaded component photo</td><td>base64 JPEG/PNG</td></tr>
+          <tr><td><span class="mono">component_matches</span></td><td>UI precompute / GTM retrieve</td><td>Hybrid catalog match results</td><td>SKU, match %, reasoning, image path</td></tr>
           <tr><td><span class="mono">is_pricing</span></td><td><span class="mono">pricing_gate</span></td><td>Controls pricing branch behavior</td><td><span class="mono">true</span> / <span class="mono">false</span></td></tr>
-          <tr><td><span class="mono">user_email</span></td><td><span class="mono">collect_email</span></td><td>Required for gated pricing output</td><td><span class="mono">ritvik@dauji.ai</span></td></tr>
-          <tr><td><span class="mono">send_intent</span> / <span class="mono">send_confirmed</span></td><td><span class="mono">send_gate</span> / UI</td><td>Detect send intent; actual send requires UI confirm</td><td><span class="mono">true</span> / <span class="mono">false</span></td></tr>
-          <tr><td><span class="mono">answer</span></td><td>generate / send nodes</td><td>Final user-facing response</td><td>Generated answer or send summary</td></tr>
-          <tr><td><span class="mono">steps</span></td><td>Every node</td><td>Trace log shown in UI and eval parsing</td><td>["Supervisor Routing Agent -> GTM", "..."]</td></tr>
+          <tr><td><span class="mono">user_email</span></td><td><span class="mono">collect_email</span></td><td>Required for gated pricing output</td><td>verified work email</td></tr>
+          <tr><td><span class="mono">send_intent</span> / <span class="mono">send_requested</span></td><td><span class="mono">send_gate</span></td><td>LLM-detected immediate-send intent</td><td><span class="mono">true</span> / <span class="mono">false</span></td></tr>
+          <tr><td><span class="mono">send_confirmed</span></td><td>UI send button / <span class="mono">confirm_send()</span></td><td>Actual Brevo delivery gate</td><td><span class="mono">true</span> only after UI confirm</td></tr>
+          <tr><td><span class="mono">answer</span></td><td>generate / send / fast-path CRM</td><td>Final user-facing response</td><td>answer text or send summary</td></tr>
+          <tr><td><span class="mono">steps</span></td><td>Every node</td><td>Pipeline trace in UI and eval parsing</td><td>["Supervisor Routing Agent → GTM", "..."]</td></tr>
         </tbody>
       </table>
     </section>
 
     <section class="section">
-      <h2>Step 6: Node-by-Node Execution Framework</h2>
+      <h2>Step 7: Node-by-Node Execution Framework</h2>
       <div class="three-col">
         <article class="panel panel-gtm">
           <h3>GTM branch logic</h3>
           <ol class="step-list">
-            <li><span class="mono">gtm_retrieve</span> gathers internal + web context.</li>
-            <li><span class="mono">pricing_gate</span> decides if email verification is required.</li>
-            <li><span class="mono">collect_email</span> extracts email from question text.</li>
-            <li><span class="mono">gtm_generate</span> composes final grounded answer.</li>
+            <li><span class="mono">gtm_retrieve</span> — component image match (if photo attached) OR KB + web tool loop.</li>
+            <li><span class="mono">pricing_gate</span> — skipped for component ID; otherwise decides email verification.</li>
+            <li><span class="mono">collect_email</span> — extracts email from conversation when pricing gated.</li>
+            <li><span class="mono">gtm_generate</span> — grounded answer with match confidence tiers when applicable.</li>
           </ol>
         </article>
         <article class="panel panel-outreach">
           <h3>Outreach branch logic</h3>
           <ol class="step-list">
-            <li><span class="mono">outreach_research</span> sources leads (Apollo or Salesforce) + product context.</li>
-            <li><span class="mono">outreach_generate</span> drafts one email/post per recipient.</li>
-            <li><span class="mono">send_gate</span> resolves "send now" vs "review only".</li>
-            <li><span class="mono">outreach_send</span> delivers via Brevo on confirm + logs a Salesforce Task.</li>
+            <li><span class="mono">outreach_research</span> — Apollo net-new leads, Salesforce lead pull, KB/web, component match context.</li>
+            <li><span class="mono">outreach_generate</span> — formal B2B email drafts (or LinkedIn post) per recipient.</li>
+            <li><span class="mono">send_gate</span> — "send now" vs "review only" (actual send still needs UI confirm).</li>
+            <li><span class="mono">outreach_send</span> — Brevo HTML send + catalog image inline/attach + Salesforce Task log.</li>
           </ol>
         </article>
         <article class="panel" style="border-left:4px solid var(--pink);">
           <h3>CRM branch logic</h3>
           <ol class="step-list">
-            <li><span class="mono">crm_research</span> runs the right Salesforce tool (query, aggregate, DML, describe) — or a fast-path leads table.</li>
-            <li><span class="mono">crm_generate</span> formats results into a clean answer (passthrough for the fast-path).</li>
+            <li><span class="mono">crm_research</span> — fast-path tables (latest leads, time window, part enquiry) OR Salesforce tool loop.</li>
+            <li><span class="mono">crm_generate</span> — formats tool results (passthrough when fast-path already set <span class="mono">answer</span>).</li>
           </ol>
         </article>
       </div>
     </section>
 
     <section class="section">
-      <h2>Step 6b: Tools</h2>
+      <h2>Step 8: LangChain Tools</h2>
       <table>
         <thead><tr><th>Tool</th><th>Backend</th><th>Used by</th><th>Purpose</th></tr></thead>
         <tbody>
-          <tr><td><span class="mono">search_knowledge_base</span></td><td>Qdrant</td><td>GTM, Outreach</td><td>Product docs from your indexed knowledge base</td></tr>
+          <tr><td><span class="mono">search_knowledge_base</span></td><td>Qdrant hybrid RAG</td><td>GTM, Outreach</td><td>Product docs, specs, pricing context from indexed KB</td></tr>
           <tr><td><span class="mono">web_search</span></td><td>DuckDuckGo (ddgs)</td><td>GTM, Outreach</td><td>Live web for market/competitor/industry info</td></tr>
-          <tr><td><span class="mono">apollo_search</span></td><td>Apollo.io</td><td>Outreach</td><td>Find new leads by job title, location, industry</td></tr>
-          <tr><td><span class="mono">send_email</span></td><td>Brevo</td><td>Outreach</td><td>Deliver personalized emails on confirm</td></tr>
-          <tr><td><span class="mono">salesforce_query_records</span></td><td>Salesforce (MCP)</td><td>CRM, Outreach</td><td>SOQL reads of Leads/Contacts/etc.</td></tr>
-          <tr><td><span class="mono">salesforce_aggregate_query</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>GROUP BY / COUNT / SUM aggregate queries</td></tr>
-          <tr><td><span class="mono">salesforce_dml_records</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>Insert / update / delete / upsert records</td></tr>
-          <tr><td><span class="mono">salesforce_search_leads</span> / <span class="mono">salesforce_upsert_lead</span></td><td>Salesforce</td><td>CRM, Outreach</td><td>Lookup + create/update leads</td></tr>
-          <tr><td><span class="mono">salesforce_describe_object</span> / <span class="mono">salesforce_search_objects</span></td><td>Salesforce (MCP)</td><td>CRM</td><td>Schema / object discovery</td></tr>
+          <tr><td><span class="mono">apollo_search</span></td><td>Apollo.io</td><td>Outreach</td><td>Net-new leads by job title, location, industry</td></tr>
+          <tr><td><span class="mono">salesforce_query_records</span></td><td>Salesforce MCP / REST</td><td>CRM, Outreach</td><td>SOQL reads (Leads, Contacts, Tasks, etc.)</td></tr>
+          <tr><td><span class="mono">salesforce_aggregate_query</span></td><td>Salesforce MCP</td><td>CRM</td><td>GROUP BY / COUNT / SUM aggregate queries</td></tr>
+          <tr><td><span class="mono">salesforce_dml_records</span></td><td>Salesforce MCP / REST</td><td>CRM</td><td>Insert / update / delete / upsert records</td></tr>
+          <tr><td><span class="mono">salesforce_search_leads</span></td><td>Salesforce</td><td>CRM, Outreach</td><td>Lookup existing Leads/Contacts by name, email, company</td></tr>
+          <tr><td><span class="mono">salesforce_upsert_lead</span></td><td>Salesforce</td><td>CRM</td><td>Create or update a Lead record</td></tr>
+          <tr><td><span class="mono">salesforce_describe_object</span></td><td>Salesforce MCP</td><td>CRM</td><td>Object schema: fields, types, picklists</td></tr>
+          <tr><td><span class="mono">salesforce_search_objects</span></td><td>Salesforce MCP</td><td>CRM</td><td>Find standard/custom objects by name pattern</td></tr>
         </tbody>
       </table>
+      <p class="tiny">Email delivery uses <span class="mono">deliver_brevo_email()</span> directly in <span class="mono">outreach_send</span> (not a LangChain tool). Tool routing is centralized in <span class="mono">agents/tools/runner.call_tools</span>.</p>
+    </section>
+
+    <section class="section anchor-target" id="vision">
+      <h2>Step 9: Component Vision Catalog</h2>
+      <div class="two-col">
+        <article class="panel">
+          <h3>Indexing flow</h3>
+          <ol class="step-list">
+            <li>User uploads catalog photo + optional SKU/name in sidebar.</li>
+            <li><span class="mono">component_store.index_component_image</span> saves file to <span class="mono">data/components/</span>.</li>
+            <li>CLIP embeds image into <span class="mono">Rama_components</span> Qdrant collection.</li>
+            <li>Claude vision captions the part; caption text is also chunked into text KB.</li>
+          </ol>
+        </article>
+        <article class="panel">
+          <h3>Match flow (chat attach)</h3>
+          <ol class="step-list">
+            <li>UI pre-runs <span class="mono">match_component_image_bytes</span> before calling the agent.</li>
+            <li>CLIP retrieves top candidates from image collection.</li>
+            <li>Claude vision re-ranks candidates (shape, markings, package).</li>
+            <li>Text KB corroborates via caption/SKU search; scores fused into match %.</li>
+            <li>Results shown in chat panel; GTM/outreach nodes use match context in prompts.</li>
+          </ol>
+        </article>
+      </div>
     </section>
 
     <section class="section">
-      <h2>Step 7: Galileo SDK (Tracing + Evaluations)</h2>
+      <h2>Step 10: Galileo SDK (Tracing + Evaluations)</h2>
       <div class="two-col">
         <article class="panel">
           <h3>Tracing in app runtime</h3>
           <ul>
-            <li><span class="mono">observability/galileo.py</span> is the integration hub for initialization, callbacks, spans, and logger access.</li>
+            <li><span class="mono">observability/galileo.py</span> — init, callbacks, spans, sessions, console links.</li>
             <li><span class="mono">ensure_galileo_initialized()</span> connects project + log stream once.</li>
-            <li><span class="mono">get_langchain_config()</span> injects <span class="mono">GalileoCallback</span> into LLM/tool invokes.</li>
-            <li><span class="mono">merge_node_config(...)</span> injects <span class="mono">GalileoCallback</span> on LLM/tool invokes; <span class="mono">send_email</span> also uses <span class="mono">@log_span(...)</span>.</li>
-            <li><span class="mono">agents/__init__.py::ask()</span> starts top-level trace (<span class="mono">start_trace</span>) and concludes/flushes it.</li>
+            <li><span class="mono">get_langchain_config()</span> injects <span class="mono">GalileoCallback</span> into LLM invokes.</li>
+            <li><span class="mono">merge_node_config(...)</span> on every node LLM call for nested span metadata.</li>
+            <li><span class="mono">agents/__init__.py::ask()</span> starts top-level trace; <span class="mono">confirm_send()</span> traces UI send.</li>
             <li><span class="mono">ui/ui.py</span> starts one Galileo session per fresh chat thread.</li>
           </ul>
         </article>
@@ -648,49 +706,56 @@
     </section>
 
     <section class="section anchor-target" id="examples">
-      <h2>Step 8: Examples (End-to-End Requests)</h2>
+      <h2>Step 11: Examples (End-to-End Requests)</h2>
       <div class="three-col">
         <article class="panel">
-          <h3>Example A - Pricing</h3>
+          <h3>Example A — Pricing gate</h3>
           <p><strong>User:</strong> "What does this product cost?"</p>
-          <p><strong>Path:</strong> <span class="mono">classify -> gtm_retrieve -> pricing_gate -> collect_email</span></p>
-          <p><strong>Outcome:</strong> asks for verified email before full pricing details.</p>
+          <p><strong>Path:</strong> <span class="mono">classify → gtm_retrieve → pricing_gate → collect_email</span></p>
+          <p><strong>Outcome:</strong> asks for verified work email before full pricing details.</p>
         </article>
         <article class="panel">
-          <h3>Example B - Content draft</h3>
-          <p><strong>User:</strong> "Write a LinkedIn post for AI platform teams."</p>
-          <p><strong>Path:</strong> <span class="mono">classify -> outreach_research -> outreach_generate -> send_gate(review)</span></p>
-          <p><strong>Outcome:</strong> returns draft only, no email sent.</p>
+          <h3>Example B — Component photo</h3>
+          <p><strong>User:</strong> attaches component photo + "Is this in our catalog?"</p>
+          <p><strong>Path:</strong> UI match → <span class="mono">classify(image) → gtm_retrieve → gtm_generate</span></p>
+          <p><strong>Outcome:</strong> match % + SKU/stock answer; pricing gate skipped for component ID.</p>
         </article>
         <article class="panel">
-          <h3>Example C - Send request</h3>
-          <p><strong>User:</strong> "Send this to ritvik@dauji.ai now."</p>
-          <p><strong>Path:</strong> <span class="mono">classify -> outreach_research -> outreach_generate -> send_gate(send) -> outreach_send</span></p>
-          <p><strong>Outcome:</strong> sends via Brevo, logs a Salesforce Task, returns status summary.</p>
+          <h3>Example C — Content draft</h3>
+          <p><strong>User:</strong> "Write a LinkedIn post for distribution teams."</p>
+          <p><strong>Path:</strong> <span class="mono">classify → outreach_research → outreach_generate → send_gate(review)</span></p>
+          <p><strong>Outcome:</strong> returns draft only; no email sent.</p>
         </article>
         <article class="panel">
-          <h3>Example D - CRM query</h3>
-          <p><strong>User:</strong> "Count opportunities by stage" / "Fetch the latest leads from Salesforce."</p>
-          <p><strong>Path:</strong> <span class="mono">classify -> crm_research -> crm_generate</span></p>
-          <p><strong>Outcome:</strong> runs the right Salesforce tool (aggregate / query) and returns a formatted table.</p>
+          <h3>Example D — Confirmed send</h3>
+          <p><strong>User:</strong> drafts email, clicks <strong>Send email</strong> in UI.</p>
+          <p><strong>Path:</strong> <span class="mono">confirm_send() → outreach_send</span> (bypasses graph draft step)</p>
+          <p><strong>Outcome:</strong> Brevo HTML send + catalog image + Salesforce Task logged.</p>
         </article>
         <article class="panel">
-          <h3>Example E - Cross-agent</h3>
-          <p><strong>User:</strong> "Find leads from Salesforce and email them about LED Red 5mm."</p>
-          <p><strong>Path:</strong> <span class="mono">classify(outreach) -> outreach_research(Salesforce leads) -> outreach_generate -> send_gate(review)</span></p>
-          <p><strong>Outcome:</strong> pulls CRM leads, drafts one email each, holds for confirm.</p>
+          <h3>Example E — CRM fast-path</h3>
+          <p><strong>User:</strong> "Show latest 10 leads" / "Leads who enquired about Part No. LED-RED-5MM"</p>
+          <p><strong>Path:</strong> <span class="mono">classify → crm_research</span> (no tool loop) → <span class="mono">crm_generate</span> passthrough</p>
+          <p><strong>Outcome:</strong> Markdown table from repository fast-path.</p>
+        </article>
+        <article class="panel">
+          <h3>Example F — Cross-agent outreach</h3>
+          <p><strong>User:</strong> "Email Salesforce leads about LED Red 5mm availability."</p>
+          <p><strong>Path:</strong> <span class="mono">classify(outreach) → outreach_research(SF leads) → outreach_generate → send_gate(review)</span></p>
+          <p><strong>Outcome:</strong> one formal email per CRM lead; held for UI confirm.</p>
         </article>
       </div>
     </section>
 
     <section class="section">
-      <h2>Step 10: Official Resource Links</h2>
+      <h2>Step 12: Official Resource Links</h2>
       <table>
         <thead><tr><th>Service</th><th>Why it is used here</th><th>Link</th></tr></thead>
         <tbody>
           <tr><td>Galileo</td><td>Tracing, session logs, and experiment/eval tracking</td><td><a href="https://app.galileo.ai/">app.galileo.ai</a></td></tr>
           <tr><td>Anthropic</td><td>Primary chat model runtime for routing/generation logic</td><td><a href="https://console.anthropic.com/">console.anthropic.com</a></td></tr>
-          <tr><td>Qdrant Cloud</td><td>Vector storage, hybrid search, and server-side embeddings</td><td><a href="https://cloud.qdrant.io/">cloud.qdrant.io</a></td></tr>
+          <tr><td>Qdrant Cloud</td><td>Text KB + component image vectors; server-side hybrid embeddings</td><td><a href="https://cloud.qdrant.io/">cloud.qdrant.io</a></td></tr>
+          <tr><td>sentence-transformers</td><td>Local CLIP model for component catalog visual search</td><td><a href="https://www.sbert.net/">sbert.net</a></td></tr>
           <tr><td>LangGraph</td><td>State graph orchestration and conditional routing</td><td><a href="https://langchain-ai.github.io/langgraph/">LangGraph docs</a></td></tr>
           <tr><td>Streamlit</td><td>Application UI and interactive chat view</td><td><a href="https://docs.streamlit.io/">docs.streamlit.io</a></td></tr>
           <tr><td>Apollo</td><td>Lead search and enrichment in outreach flow</td><td><a href="https://www.apollo.io/">apollo.io</a></td></tr>
