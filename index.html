@@ -386,11 +386,11 @@
     <section class="hero">
       <div class="eyebrow">Technical Walkthrough</div>
       <h1>Product Marketing — Multi-Agent RAG with Observations & Evals</h1>
-      <p class="lead">A professional, plain-English walkthrough of your real multi-agent codebase: framework choices, node-level graph flow, state behavior, tool usage, observability, and evaluation pipeline.</p>
+      <p class="lead">Technical documentation for a LangGraph multi-agent platform covering architecture, routing, state, integrations, observability, and evaluation.</p>
       <p class="hero-intro">
-        This multi-agent system handles three real business workflows in one place: <strong>GTM product assistance</strong>, <strong>outreach content execution</strong>, and <strong>Salesforce CRM operations</strong>.
-        It works by first routing each user request to the right specialist branch, then running branch-specific nodes that gather context, apply business gates (like pricing email verification or send approval), and return a final answer.
-        Every step is traced with Galileo so you can inspect exactly what happened and evaluate quality over time.
+        A supervisor routes each request to one of three specialists—<strong>GTM</strong>, <strong>Outreach</strong>, or <strong>CRM</strong>—each backed by its own LangGraph branch.
+        Downstream nodes retrieve context, call external tools, and enforce business rules such as pricing verification and send confirmation before returning a response.
+        Execution is fully traced with <strong>Galileo</strong> for debugging, monitoring, and quality evaluation.
       </p>
       <div class="chip-row">
         <span class="chip">LangGraph</span>
