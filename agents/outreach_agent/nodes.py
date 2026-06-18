@@ -178,8 +178,58 @@ def _salesforce_tools():
     return [salesforce_search_leads, salesforce_query_records]
 
 
+_SF_PLATFORM_RE = re.compile(r"\b(salesforce|sfdc|crm)\b", re.IGNORECASE)
+
+
+def _wants_salesforce_leads(text: str) -> bool:
+    """User wants to email recipients sourced from Salesforce (e.g. 'email the leads from salesforce')."""
+    return bool(_SF_PLATFORM_RE.search(text) and re.search(r"\blead", text, re.IGNORECASE))
+
+
+def _salesforce_leads_context(turn: str, limit: int = 10) -> tuple[str, int]:
+    """Pull leads (with emails) from Salesforce + product info, formatted for per-lead email drafting."""
+    from services.salesforce_mcp import parse_query_records
+
+    raw = salesforce_query_records.invoke({
+        "object_name": "Lead",
+        "fields": ["Id", "Name", "Email", "Company", "Title", "Status"],
+        "order_by": "CreatedDate DESC",
+        "limit": limit,
+    })
+    leads = []
+    for row in parse_query_records(raw):
+        email = (row.get("Email") or "").strip()
+        if not email or email.lower() in ("null", "none"):
+            continue
+        name = row.get("Name") or "there"
+        title = row.get("Title") if row.get("Title") not in (None, "null", "None") else "N/A"
+        company = row.get("Company") if row.get("Company") not in (None, "null", "None") else "N/A"
+        leads.append(f"**{name}** — {title} at {company}\n  Email: {email}")
+
+    if not leads:
+        return "", 0
+
+    product_info = search_knowledge_base.invoke({"query": turn[:500]})
+    block = (
+        f"Found {len(leads)} leads from Salesforce CRM:\n\n"
+        + "\n\n".join(leads)
+        + f"\n\nProduct info:\n{product_info}"
+    )
+    return block, len(leads)
+
+
 def outreach_research(state: AgentState, config: RunnableConfig | None = None) -> dict:
     turn = build_turn_context(state)
+    question = (state.get("question") or "").strip()
+
+    # Cross-agent flow: "email the leads from Salesforce" → source recipients from CRM, then draft per lead.
+    if is_salesforce_configured() and _wants_salesforce_leads(question):
+        block, count = _salesforce_leads_context(turn)
+        if count:
+            return {
+                "context": block,
+                "steps": [f"Outreach Research → {count} leads from Salesforce + KB"],
+            }
 
     path, source = _leads_gate_decision(state, config)
     wants_leads = path == "leads"
@@ -241,7 +291,7 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
     if has_leads:
         prompt = (
             "You are a product marketing outreach specialist. "
-            "You found REAL leads from Apollo with their emails. "
+            "You have REAL leads (from Apollo or your Salesforce CRM) with their emails. "
             "For EACH lead that has an email, write a personalized product outreach email.\n\n"
             "Rules:\n"
             "- Write ONLY emails, NOT LinkedIn posts\n"
@@ -249,7 +299,9 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             "- Connect their likely pain points to our product benefits\n"
             "- Keep each email 2-3 short paragraphs\n"
             "- Sign off as 'The Product Marketing Team'\n"
-            "- NO placeholder text like [Your Name] — use real data only\n\n"
+            "- NO placeholder text like [Your Name] — use real data only\n"
+            "- Do NOT refuse and do NOT add commentary about whether a lead fits the product. "
+            "Always write one email per lead and output ONLY the emails.\n\n"
             "Format EACH email as:\n"
             "**To: FirstName LastName** (their@email.com)\n"
             "**Subject:** <personalized subject>\n"

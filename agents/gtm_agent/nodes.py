@@ -87,9 +87,12 @@ def gtm_generate(state: AgentState, config: RunnableConfig | None = None) -> dic
         extra = f"\nUser email verified ({state['user_email']}). Include full pricing details.\n"
     turn = build_turn_context(state)
     resp = llm.invoke(
-        f"You are a product marketing specialist for our company. Answer using ONLY the context below.{extra}\n"
+        f"You are a product marketing specialist for our company. Answer using the context below.{extra}\n"
+        f"Product, pricing, competitor, and market questions are all IN SCOPE for GTM.\n"
         f"If the user asks to email, send, or market a product TO someone, reply briefly that outreach can handle that.\n"
-        f"If the question is unrelated to our products or GTM, say so briefly.\n\n"
+        f"If the context lacks the needed market/competitor data (e.g. live web search returned nothing), "
+        f"say you couldn't retrieve current market data right now — do NOT claim the question is unrelated.\n"
+        f"Only say a question is out of scope if it has nothing to do with products, pricing, market, or GTM.\n\n"
         f"Context:\n{state['context']}\n\n"
         f"{turn}\nAnswer:",
         config=merge_node_config(

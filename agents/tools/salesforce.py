@@ -35,11 +35,12 @@ def salesforce_query_records(
     limit: int = 10,
 ) -> str:
     """Query Salesforce records (same tool as mcp-server-salesforce). Use for Leads, Contacts, Tasks, etc."""
-    from services.salesforce_client import is_salesforce_configured, uses_mcp_server
+    from services.salesforce_client import uses_mcp_server
     from services.salesforce_mcp import call_mcp_tool
 
-    if not is_salesforce_configured():
-        return "ERROR: Salesforce not configured. Add SALESFORCE_* vars to .env (see README)."
+    err = _require_salesforce()
+    if err:
+        return err
 
     args = {
         "objectName": object_name,
@@ -94,11 +95,12 @@ def salesforce_dml_records(
     external_id_field: str = "",
 ) -> str:
     """Insert/update/delete Salesforce records (same tool as mcp-server-salesforce)."""
-    from services.salesforce_client import is_salesforce_configured, uses_mcp_server
+    from services.salesforce_client import uses_mcp_server
     from services.salesforce_mcp import call_mcp_tool
 
-    if not is_salesforce_configured():
-        return "ERROR: Salesforce not configured. Add SALESFORCE_* vars to .env (see README)."
+    err = _require_salesforce()
+    if err:
+        return err
 
     try:
         if uses_mcp_server():
@@ -152,10 +154,11 @@ def salesforce_search_leads(
     limit: int = 10,
 ) -> str:
     """Search Salesforce CRM for existing Leads and Contacts by name, email, or company."""
-    from services.salesforce_client import is_salesforce_configured, search_leads_and_contacts
+    from services.salesforce_client import search_leads_and_contacts
 
-    if not is_salesforce_configured():
-        return "ERROR: Salesforce not configured. Add SALESFORCE_* vars to .env (see README)."
+    err = _require_salesforce()
+    if err:
+        return err
 
     try:
         records = search_leads_and_contacts(
@@ -196,10 +199,11 @@ def salesforce_upsert_lead(
     notes: str = "",
 ) -> str:
     """Create or update a Lead in Salesforce CRM. Use when the user asks to add someone to the CRM."""
-    from services.salesforce_client import is_salesforce_configured, upsert_lead
+    from services.salesforce_client import upsert_lead
 
-    if not is_salesforce_configured():
-        return "ERROR: Salesforce not configured. Add SALESFORCE_* vars to .env (see README)."
+    err = _require_salesforce()
+    if err:
+        return err
 
     try:
         result = upsert_lead(

@@ -10,7 +10,7 @@ pydantic
 pypdf
 pdfplumber
 openpyxl
-duckduckgo-search
+ddgs
 requests
 galileo
 simple-salesforce

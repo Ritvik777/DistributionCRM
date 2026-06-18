@@ -22,10 +22,11 @@ _CRM_APEX_RE = re.compile(
     r"\b(apex|soql|sosl|execute anonymous|trigger|aggregate query|describe (the )?object)\b",
     re.IGNORECASE,
 )
-# Outreach verbs: when present (without an explicit CRM platform word), prefer the outreach agent.
+# Outreach verbs: emailing/messaging intent. "send" alone is excluded (ambiguous, e.g.
+# "send me the latest leads"); we require an email/draft/outreach signal.
 _OUTREACH_VERB_RE = re.compile(
-    r"\b(email|e-?mail|draft|compose|send|outreach|reach out|cold (email|message)|"
-    r"write (a|an) (email|post|message|linkedin)|linkedin post)\b",
+    r"\b(e-?mail|draft|compose|outreach|reach out|cold (email|message)|"
+    r"send (an? )?(email|message|note)|write (a|an) (email|post|message|linkedin)|linkedin post)\b",
     re.IGNORECASE,
 )
 
@@ -34,22 +35,35 @@ def is_crm_request(text: str) -> bool:
     """True when the message should be handled by the dedicated CRM (Salesforce) agent.
 
     Covers reads (leads/contacts/objects), aggregates, record DML, and Apex/SOQL work.
+    A send/email intent always wins (CRM agent cannot send email) — except pure Apex/SOQL.
     """
-    # Apex / SOQL / metadata work is unambiguously CRM.
+    # Apex / SOQL / metadata work is unambiguously CRM, even if it mentions email.
     if _CRM_APEX_RE.search(text):
         return True
+    # Email/outreach intent → outreach agent (it can also look up CRM during research),
+    # even if the message mentions Salesforce/leads.
+    if _OUTREACH_VERB_RE.search(text):
+        return False
     # Explicit platform mention (salesforce/sfdc/crm) → CRM agent.
     if _CRM_FETCH_RE.search(text):
         return True
-    # Operations on a CRM object (count/update/describe leads/opps/etc.) with no outreach intent.
-    if _OUTREACH_VERB_RE.search(text):
-        return False
+    # Operations on a CRM object (count/update/describe leads/opps/etc.).
     if _CRM_OBJECT_RE.search(text) and _CRM_OP_RE.search(text):
         return True
-    # "fetch/list/show leads/contacts" with no outreach intent → CRM data lookup.
+    # "fetch/list/show leads/contacts" → CRM data lookup.
     if wants_crm_list_fetch(text):
         return True
     return False
+
+
+def is_outreach_request(text: str) -> bool:
+    """True when the message has an email/outreach send intent (which the CRM agent cannot do).
+
+    Apex/SOQL still belongs to CRM, so those are excluded.
+    """
+    if _CRM_APEX_RE.search(text):
+        return False
+    return bool(_OUTREACH_VERB_RE.search(text))
 
 
 def wants_crm_list_fetch(text: str) -> bool:

@@ -12,7 +12,7 @@ from services.vector_db_service import (
     reindex_kb_source,
 )
 from services.agent_service import ask_agent, confirm_send_email, load_graph_image, load_graph_ascii
-from observability import start_chat_session, get_console_links
+from observability import start_chat_session, get_console_links, is_galileo_enabled
 
 EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 
@@ -21,106 +21,102 @@ STYLE_BLOCK = """
 <style>
     :root {
         --app-bg: #ffffff;
-        --panel-bg: #f7f7f7;
+        --panel-bg: #fbfbfd;
         --card-bg: #ffffff;
-        --border: #d9d9d9;
-        --text-main: #111111;
-        --text-muted: #4b4b4b;
-        --brand: #111111;
+        --border: #e6e6ec;
+        --text-main: #14141a;
+        --text-muted: #6b6b78;
+        --brand: #4f46e5;
+        --gtm: #2563eb;     --gtm-bg: #e7efff;
+        --outreach: #047857; --outreach-bg: #def5ea;
+        --crm: #7c3aed;      --crm-bg: #efe6fe;
     }
-    .stApp {
-        background: var(--app-bg) !important;
-        color: var(--text-main) !important;
-    }
-    [data-testid="stAppViewContainer"] {
-        background: var(--app-bg) !important;
-    }
-    [data-testid="stHeader"] {
-        background: #ffffff !important;
-    }
+    .stApp { background: var(--app-bg) !important; color: var(--text-main) !important; }
+    [data-testid="stAppViewContainer"] { background: var(--app-bg) !important; }
+    [data-testid="stHeader"] { background: transparent !important; }
     [data-testid="stSidebar"] {
         background: var(--panel-bg) !important;
         border-right: 1px solid var(--border);
     }
-    [data-testid="stSidebar"] * {
-        color: var(--text-main) !important;
-    }
-    .stMarkdown, .stCaption, .stText, p, label, h1, h2, h3 {
-        color: var(--text-main) !important;
-    }
+    [data-testid="stSidebar"] * { color: var(--text-main) !important; }
+    .stMarkdown, .stCaption, .stText, p, label, h1, h2, h3 { color: var(--text-main) !important; }
     .stTextInput input, .stTextArea textarea, .stChatInput textarea, [data-testid="stChatInput"] textarea {
         background: var(--card-bg) !important;
         color: var(--text-main) !important;
         border: 1px solid var(--border) !important;
-        border-radius: 10px !important;
+        border-radius: 12px !important;
     }
-    [data-testid="stBottomBlockContainer"] {
-        background: #ffffff !important;
-        border-top: 1px solid var(--border);
-    }
-    [data-testid="stChatInput"] {
-        max-width: 100% !important;
-        margin: 0 !important;
-    }
-    [data-testid="stChatInputContainer"] {
-        background: #ffffff !important;
-    }
+    [data-testid="stBottomBlockContainer"] { background: #ffffff !important; border-top: 1px solid var(--border); }
+    [data-testid="stChatInput"] { max-width: 100% !important; margin: 0 !important; }
+    [data-testid="stChatInputContainer"] { background: #ffffff !important; }
     .stButton button {
         background: #ffffff !important;
         color: var(--text-main) !important;
         border: 1px solid var(--border) !important;
-        border-radius: 10px !important;
+        border-radius: 12px !important;
+        transition: border-color .15s ease, box-shadow .15s ease;
     }
-    .stAlert {
-        border: 1px solid var(--border) !important;
-        border-radius: 10px !important;
+    .stButton button:hover { border-color: var(--brand) !important; box-shadow: 0 1px 6px rgba(79,70,229,.12) !important; }
+    .stButton button[kind="primary"] {
+        background: var(--brand) !important;
+        color: #ffffff !important;
+        border: 1px solid var(--brand) !important;
     }
-    [data-testid="stSidebar"] {
-        background: var(--panel-bg);
+    .stAlert { border: 1px solid var(--border) !important; border-radius: 12px !important; }
+    [data-testid="stChatMessage"] {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 6px 14px;
+        box-shadow: 0 1px 2px rgba(20,20,26,.03);
     }
+
     .agent-badge {
         display: inline-block;
         font-size: 12px;
-        font-weight: 600;
-        padding: 4px 10px;
+        font-weight: 700;
+        padding: 4px 12px;
         border-radius: 999px;
         margin-bottom: 8px;
+        letter-spacing: .2px;
     }
-    .badge-gtm { background: #eeeeee; color: #111111; }
-    .badge-outreach { background: #eeeeee; color: #111111; }
-    .badge-crm { background: #eeeeee; color: #111111; }
+    .badge-gtm { background: var(--gtm-bg); color: var(--gtm); }
+    .badge-outreach { background: var(--outreach-bg); color: var(--outreach); }
+    .badge-crm { background: var(--crm-bg); color: var(--crm); }
+
     .trace-step {
-        background: var(--card-bg);
+        background: #fafafe;
         color: var(--text-main);
         border-left: 3px solid var(--brand);
-        border: 1px solid var(--border);
-        padding: 8px 14px;
-        margin: 4px 0;
-        border-radius: 0 6px 6px 0;
-        font-family: monospace;
-        font-size: 13px;
+        padding: 7px 12px;
+        margin: 5px 0;
+        border-radius: 0 8px 8px 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12.5px;
     }
-    .hero-subtitle {
-        font-size: 14px;
-        color: var(--text-muted);
-        margin-top: -10px;
-        margin-bottom: 20px;
-    }
+    .hero-title { font-size: 30px; font-weight: 800; letter-spacing: -.5px; margin-bottom: 2px; }
+    .hero-subtitle { font-size: 14px; color: var(--text-muted); margin-top: 0; margin-bottom: 18px; }
+
     .stat-card {
         background: var(--card-bg);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 16px;
+        border-radius: 14px;
+        padding: 14px 10px;
         text-align: center;
-        box-shadow: none;
     }
-    .stat-number { font-size: 28px; font-weight: 700; color: var(--brand); }
-    .stat-label {
-        font-size: 12px;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 1px;
+    .stat-number { font-size: 24px; font-weight: 800; color: var(--brand); line-height: 1.1; }
+    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .8px; }
+
+    .chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 12px; font-weight: 600;
+        padding: 4px 10px; margin: 3px 4px 3px 0;
+        border-radius: 999px; border: 1px solid var(--border); background: #fff;
     }
+    .chip .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+    .dot-on { background: #10b981; }
+    .dot-off { background: #c4c4cf; }
+    .chip-off { color: var(--text-muted); }
 </style>
 """
 
@@ -129,6 +125,13 @@ BADGES = {
     "outreach": ("📝 Outreach Agent", "badge-outreach"),
     "crm": ("🗂️ CRM Agent", "badge-crm"),
 }
+
+EXAMPLE_PROMPTS = [
+    "Do we have LED Red 5mm?",
+    "Draft a cold email to CTOs at Series B SaaS companies",
+    "Fetch the latest leads from Salesforce",
+    "Count opportunities by stage",
+]
 SEND_WORDS = ["send it", "send now", "go ahead and send", "yes send", "please send"]
 MAX_HISTORY_MESSAGES = 10
 
@@ -200,28 +203,50 @@ def _render_trace(steps: list[str]) -> None:
             )
 
 
+def _salesforce_ready() -> bool:
+    try:
+        from services.salesforce_client import is_salesforce_configured
+
+        return is_salesforce_configured()
+    except Exception:
+        return False
+
+
+def _env_set(name: str, placeholder_prefix: str = "your-") -> bool:
+    value = (os.getenv(name) or "").strip()
+    return bool(value) and not value.startswith(placeholder_prefix)
+
+
+def _stat_card(number, label: str) -> str:
+    return (
+        f'<div class="stat-card"><div class="stat-number">{number}</div>'
+        f'<div class="stat-label">{label}</div></div>'
+    )
+
+
 def _render_stats(doc_count: int) -> None:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(
-            f"""
-            <div class="stat-card">
-                <div class="stat-number">{doc_count}</div>
-                <div class="stat-label">Docs in DB</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with col2:
-        st.markdown(
-            """
-            <div class="stat-card">
-                <div class="stat-number">4</div>
-                <div class="stat-label">Agents</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    crm = "ON" if _salesforce_ready() else "—"
+    col1, col2, col3 = st.columns(3)
+    col1.markdown(_stat_card(doc_count, "Docs in DB"), unsafe_allow_html=True)
+    col2.markdown(_stat_card(4, "Agents"), unsafe_allow_html=True)
+    col3.markdown(_stat_card(crm, "CRM"), unsafe_allow_html=True)
+
+
+def _render_integration_status() -> None:
+    integrations = [
+        ("Qdrant", _env_set("QDRANT_URL")),
+        ("Anthropic", _env_set("ANTHROPIC_API_KEY")),
+        ("Salesforce", _salesforce_ready()),
+        ("Brevo", _env_set("BREVO_API_KEY")),
+        ("Apollo", _env_set("APOLLO_API_KEY")),
+        ("Galileo", is_galileo_enabled()),
+    ]
+    chips = "".join(
+        f'<span class="chip {"" if on else "chip-off"}">'
+        f'<span class="dot {"dot-on" if on else "dot-off"}"></span>{name}</span>'
+        for name, on in integrations
+    )
+    st.markdown(f"<div>{chips}</div>", unsafe_allow_html=True)
 
 
 def _render_doc_upload() -> None:
@@ -315,8 +340,9 @@ def _render_graph() -> None:
                 st.code(
                     "classify ─┬─ gtm_retrieve → pricing_gate ─┬─ gtm_generate → END\n"
                     "          │                              └─ collect_email → gtm_generate / END\n"
-                    "          └─ outreach_research → outreach_generate → send_gate ─┬─ END (review)\n"
-                    "                                                                 └─ outreach_send → END",
+                    "          ├─ outreach_research → outreach_generate → send_gate ─┬─ END (review)\n"
+                    "          │                                                     └─ outreach_send → END\n"
+                    "          └─ crm_research → crm_generate → END",
                     language="text",
                 )
 
@@ -352,15 +378,27 @@ def _render_how_it_works() -> None:
 """)
 
 
+def render_examples() -> None:
+    """Clickable example prompts shown on an empty chat."""
+    st.caption("Try one of these:")
+    cols = st.columns(2)
+    for index, prompt in enumerate(EXAMPLE_PROMPTS):
+        if cols[index % 2].button(prompt, key=f"example_{index}", use_container_width=True):
+            st.session_state["queued_prompt"] = prompt
+            st.rerun()
+
+
 def render_sidebar(doc_count: int) -> None:
     with st.sidebar:
         st.markdown("## 🚀 Product Marketing")
-        st.caption("Multi-Agent RAG for GTM & Outreach")
+        st.caption("Multi-Agent RAG · GTM · Outreach · CRM")
         if st.button("🆕 New Chat", use_container_width=True):
             _reset_chat_state()
             st.rerun()
         st.divider()
         _render_stats(doc_count)
+        st.markdown("**Integrations**")
+        _render_integration_status()
         if st.session_state.get("pending_drafts") and _draft_has_recipient(st.session_state.pending_drafts):
             st.warning("📧 Email draft ready — use **Confirm & Send Email** in the chat to send via Brevo.")
         st.divider()
@@ -391,25 +429,13 @@ def _execute_confirm_send() -> None:
         st.error(f"Send failed: {error}")
 
 
-def _render_confirm_send_button(key_suffix: str) -> None:
-    draft = st.session_state.get("pending_drafts", "")
-    if not draft or not _draft_has_recipient(draft):
-        return
-    if st.button(
-        "✅ Confirm & Send Email",
-        type="primary",
-        key=f"confirm_send_email_{key_suffix}",
-        use_container_width=True,
-    ):
-        _execute_confirm_send()
-
-
 def render_pending_send() -> None:
     draft = st.session_state.get("pending_drafts", "")
     if not draft or not _draft_has_recipient(draft):
         return
     st.info("📧 **Outreach draft ready.** Review the email above, then confirm to send via Brevo.")
-    _render_confirm_send_button("main")
+    if st.button("✅ Confirm & Send Email", type="primary", key="confirm_send_email", use_container_width=True):
+        _execute_confirm_send()
 
 
 def render_chat_history() -> None:

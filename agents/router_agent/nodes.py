@@ -3,7 +3,7 @@ import logging
 from langchain_core.runnables import RunnableConfig
 
 from agents.state import AgentState
-from agents.chat import build_turn_context, is_crm_request
+from agents.chat import build_turn_context, is_crm_request, is_outreach_request
 from agents.schemas import RouteDecision
 from agents.structured import invoke_structured
 from llm import get_llm
@@ -88,6 +88,10 @@ def classify(state: AgentState, config: RunnableConfig | None = None) -> dict:
     if agent != "crm" and is_crm_request(question):
         agent = "crm"
         source = "crm_override"
+    # A send/email intent must go to Outreach — the CRM agent cannot send email.
+    elif agent == "crm" and is_outreach_request(question):
+        agent = "outreach"
+        source = "outreach_override"
 
     return {"agent_type": agent, "steps": [f"Supervisor Routing Agent({source}) → {agent.upper()}"]}
 

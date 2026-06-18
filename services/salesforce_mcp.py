@@ -99,34 +99,6 @@ def call_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> str:
     return asyncio.run(_call_tool_async(tool_name, arguments))
 
 
-async def _run_mcp_batch(calls: list[tuple[str, dict[str, Any]]]) -> list[str]:
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
-
-    server_params = StdioServerParameters(
-        command=_mcp_command(),
-        args=_mcp_args(),
-        env=_salesforce_env(),
-    )
-    outputs: list[str] = []
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            for tool_name, arguments in calls:
-                result = await session.call_tool(tool_name, arguments=arguments)
-                outputs.append(_content_to_text(result))
-    return outputs
-
-
-def call_mcp_tools_batch(calls: list[tuple[str, dict[str, Any]]]) -> list[str]:
-    """Run multiple MCP tool calls in one subprocess (faster for post-send CRM updates)."""
-    if not is_mcp_available():
-        raise RuntimeError(
-            "Salesforce MCP requires Node.js. Install node/npx or set SALESFORCE_BACKEND=python"
-        )
-    return asyncio.run(_run_mcp_batch(calls))
-
-
 def parse_query_records(text: str) -> list[dict[str, str]]:
     """Parse salesforce_query_records MCP text into flat dicts per record."""
     records: list[dict[str, str]] = []

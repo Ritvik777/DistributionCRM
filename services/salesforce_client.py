@@ -1,4 +1,9 @@
-"""Salesforce integration — uses your TypeScript MCP server by default, Python REST as fallback."""
+"""Salesforce integration — uses your TypeScript MCP server by default, Python REST as fallback.
+
+All operations are written once on top of two backend primitives:
+  _run_query(...)  → list[dict] rows   (MCP salesforce_query_records  OR  simple-salesforce SOQL)
+  _run_dml(...)    → None, raises      (MCP salesforce_dml_records     OR  simple-salesforce DML)
+"""
 
 from __future__ import annotations
 
@@ -12,12 +17,14 @@ from urllib.parse import urlparse
 import requests
 
 from services.salesforce_mcp import (
-    call_mcp_tools_batch,
     mcp_dml_records,
     mcp_query_records,
     parse_query_records,
     salesforce_backend,
 )
+
+_LEAD_FIELDS = ["Id", "Name", "Email", "Company", "Title", "Status"]
+_CONTACT_FIELDS = ["Id", "Name", "Email", "Title"]
 
 
 def is_salesforce_configured() -> bool:
@@ -41,18 +48,16 @@ def _escape_soql(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
-# --- Python REST fallback (simple-salesforce) --------------------------------
+# --- Connection (Python REST fallback) ---------------------------------------
 
 def _oauth_client_credentials_token() -> tuple[str, str]:
     instance_url = os.getenv("SALESFORCE_INSTANCE_URL", "").rstrip("/")
-    client_id = os.getenv("SALESFORCE_CLIENT_ID", "")
-    client_secret = os.getenv("SALESFORCE_CLIENT_SECRET", "")
     resp = requests.post(
         f"{instance_url}/services/oauth2/token",
         data={
             "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": os.getenv("SALESFORCE_CLIENT_ID", ""),
+            "client_secret": os.getenv("SALESFORCE_CLIENT_SECRET", ""),
         },
         timeout=20,
     )
@@ -72,57 +77,99 @@ def get_salesforce_client():
     conn = (os.getenv("SALESFORCE_CONNECTION_TYPE") or "User_Password").strip()
     if conn == "OAuth_2.0_Client_Credentials":
         token, instance_url = _oauth_client_credentials_token()
-        host = urlparse(instance_url).netloc
-        return Salesforce(instance=host, session_id=token)
+        return Salesforce(instance=urlparse(instance_url).netloc, session_id=token)
 
-    username = os.getenv("SALESFORCE_USERNAME", "")
-    password = os.getenv("SALESFORCE_PASSWORD", "")
-    token = os.getenv("SALESFORCE_TOKEN", "")
     instance_url = os.getenv("SALESFORCE_INSTANCE_URL", "").strip()
-
     kwargs: dict[str, Any] = {
-        "username": username,
-        "password": password,
-        "security_token": token,
+        "username": os.getenv("SALESFORCE_USERNAME", ""),
+        "password": os.getenv("SALESFORCE_PASSWORD", ""),
+        "security_token": os.getenv("SALESFORCE_TOKEN", ""),
     }
     if instance_url:
         kwargs["instance"] = urlparse(instance_url).netloc or instance_url.replace("https://", "")
     return Salesforce(**kwargs)
 
 
-def _python_find_person_by_email(email: str) -> tuple[dict[str, Any] | None, str | None]:
-    sf = get_salesforce_client()
-    safe = _escape_soql(email.strip())
-    lead_result = sf.query(
-        f"SELECT Id, Name, Email, Company, Title, Status FROM Lead "
-        f"WHERE Email = '{safe}' ORDER BY LastModifiedDate DESC LIMIT 1"
-    )
-    if lead_result.get("totalSize", 0):
-        return lead_result["records"][0], "Lead"
-
-    contact_result = sf.query(
-        f"SELECT Id, Name, Email, Title FROM Contact "
-        f"WHERE Email = '{safe}' ORDER BY LastModifiedDate DESC LIMIT 1"
-    )
-    if contact_result.get("totalSize", 0):
-        return contact_result["records"][0], "Contact"
-    return None, None
+def _is_auth_error(exc: Exception) -> bool:
+    msg = str(exc).upper()
+    return any(k in msg for k in ("INVALID_SESSION_ID", "SESSION EXPIRED", "EXPIRED", "AUTHENTICATION", "401"))
 
 
-def _mcp_find_person_by_email(email: str) -> tuple[dict[str, str] | None, str | None]:
-    safe = _escape_soql(email.strip())
-    for obj, fields in (
-        ("Lead", ["Id", "Name", "Email", "Company", "Title", "Status"]),
-        ("Contact", ["Id", "Name", "Email", "Title"]),
-    ):
-        text = mcp_query_records(
-            object_name=obj,
-            fields=fields,
-            where_clause=f"Email = '{safe}'",
-            order_by="LastModifiedDate DESC",
-            limit=1,
-        )
-        rows = parse_query_records(text)
+def _with_python_client(fn):
+    """Run fn(salesforce_client); on an expired/invalid session, re-auth once and retry.
+
+    OAuth/CLI session ids cached by get_salesforce_client() can expire; this transparently
+    refreshes the connection instead of failing the request.
+    """
+    try:
+        return fn(get_salesforce_client())
+    except Exception as exc:
+        if not _is_auth_error(exc):
+            raise
+        get_salesforce_client.cache_clear()
+        return fn(get_salesforce_client())
+
+
+# --- Backend primitives (the only place that branches MCP vs Python) ----------
+
+def _assert_dml_succeeded(output: str) -> None:
+    match = re.search(r"Successful:\s*(\d+)", output)
+    if match and int(match.group(1)) >= 1:
+        return
+    raise RuntimeError(output.strip() or "Salesforce DML reported no successful records")
+
+
+def _run_query(
+    object_name: str,
+    fields: list[str],
+    where: str = "",
+    order_by: str = "",
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Return matching records as a list of {field: value} dicts (backend-agnostic)."""
+    if uses_mcp_server():
+        text = mcp_query_records(object_name, fields, where, order_by, limit)
+        return parse_query_records(text)
+
+    soql = f"SELECT {', '.join(fields)} FROM {object_name}"
+    if where:
+        soql += f" WHERE {where}"
+    if order_by:
+        soql += f" ORDER BY {order_by}"
+    if limit:
+        soql += f" LIMIT {limit}"
+    result = _with_python_client(lambda sf: sf.query(soql))
+    return [{f: row.get(f) for f in fields} for row in result.get("records", [])]
+
+
+def _run_dml(operation: str, object_name: str, record: dict[str, Any]) -> None:
+    """Insert/update/delete a single record; raises on failure."""
+    op = operation.lower()
+    if uses_mcp_server():
+        _assert_dml_succeeded(mcp_dml_records(op, object_name, [record]))
+        return
+
+    def _do(sf):
+        sobject = getattr(sf, object_name)
+        if op == "insert":
+            sobject.create(dict(record))
+        elif op == "update":
+            sobject.update(record["Id"], {k: v for k, v in record.items() if k != "Id"})
+        elif op == "delete":
+            sobject.delete(record["Id"])
+        else:
+            raise ValueError(f"Unsupported DML operation: {operation}")
+
+    _with_python_client(_do)
+
+
+# --- High-level CRM operations (written once) --------------------------------
+
+def find_person_by_email(email: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Return (record, 'Lead'|'Contact') for the most recent match, or (None, None)."""
+    where = f"Email = '{_escape_soql(email.strip())}'"
+    for obj, fields in (("Lead", _LEAD_FIELDS), ("Contact", _CONTACT_FIELDS)):
+        rows = _run_query(obj, fields, where, "LastModifiedDate DESC", 1)
         if rows:
             rows[0]["_ObjectType"] = obj
             return rows[0], obj
@@ -135,97 +182,23 @@ def search_leads_and_contacts(
     company: str = "",
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    if uses_mcp_server():
-        return _mcp_search_leads_and_contacts(search_text, email, company, limit)
-    return _python_search_leads_and_contacts(search_text, email, company, limit)
-
-
-def _mcp_search_leads_and_contacts(
-    search_text: str,
-    email: str,
-    company: str,
-    limit: int,
-) -> list[dict[str, Any]]:
     limit = max(1, min(limit, 25))
-    records: list[dict[str, Any]] = []
 
     if email.strip():
-        rec, obj = _mcp_find_person_by_email(email.strip())
-        if rec:
-            return [rec]
+        rec, _ = find_person_by_email(email.strip())
+        return [rec] if rec else []
 
+    records: list[dict[str, Any]] = []
     if company.strip():
-        c = _escape_soql(company.strip())
-        text = mcp_query_records(
-            object_name="Lead",
-            fields=["Id", "Name", "Email", "Company", "Title", "Status"],
-            where_clause=f"Company LIKE '%{c}%'",
-            order_by="LastModifiedDate DESC",
-            limit=limit,
-        )
-        for row in parse_query_records(text):
+        where = f"Company LIKE '%{_escape_soql(company.strip())}%'"
+        for row in _run_query("Lead", _LEAD_FIELDS, where, "LastModifiedDate DESC", limit):
             row["_ObjectType"] = "Lead"
             records.append(row)
 
     if search_text.strip():
-        t = _escape_soql(search_text.strip())
-        for obj, fields in (
-            ("Lead", ["Id", "Name", "Email", "Company", "Title", "Status"]),
-            ("Contact", ["Id", "Name", "Email", "Title"]),
-        ):
-            text = mcp_query_records(
-                object_name=obj,
-                fields=fields,
-                where_clause=f"Name LIKE '%{t}%'",
-                order_by="LastModifiedDate DESC",
-                limit=limit,
-            )
-            for row in parse_query_records(text):
-                row["_ObjectType"] = obj
-                records.append(row)
-            if len(records) >= limit:
-                break
-
-    return records[:limit]
-
-
-def _python_search_leads_and_contacts(
-    search_text: str,
-    email: str,
-    company: str,
-    limit: int,
-) -> list[dict[str, Any]]:
-    sf = get_salesforce_client()
-    limit = max(1, min(limit, 25))
-    records: list[dict[str, Any]] = []
-
-    if email.strip():
-        rec, obj = _python_find_person_by_email(email.strip())
-        if rec:
-            rec["_ObjectType"] = obj
-            return [rec]
-
-    if company.strip():
-        c = _escape_soql(company.strip())
-        result = sf.query(
-            f"SELECT Id, Name, Email, Company, Title, Status FROM Lead "
-            f"WHERE Company LIKE '%{c}%' ORDER BY LastModifiedDate DESC LIMIT {limit}"
-        )
-        for row in result.get("records", []):
-            row["_ObjectType"] = "Lead"
-            records.append(row)
-
-    if search_text.strip():
-        t = _escape_soql(search_text.strip())
-        for obj, fields in (
-            ("Lead", "Id, Name, Email, Company, Title, Status"),
-            ("Contact", "Id, Name, Email, Title"),
-        ):
-            result = sf.query(
-                f"SELECT {fields} FROM {obj} WHERE Name LIKE '%{t}%' "
-                f"ORDER BY LastModifiedDate DESC LIMIT {limit}"
-            )
-            for row in result.get("records", []):
+        where = f"Name LIKE '%{_escape_soql(search_text.strip())}%'"
+        for obj, fields in (("Lead", _LEAD_FIELDS), ("Contact", _CONTACT_FIELDS)):
+            for row in _run_query(obj, fields, where, "LastModifiedDate DESC", limit):
                 row["_ObjectType"] = obj
                 records.append(row)
             if len(records) >= limit:
@@ -242,20 +215,7 @@ def upsert_lead(
     title: str = "",
     description: str = "",
 ) -> dict[str, Any]:
-    if uses_mcp_server():
-        return _mcp_upsert_lead(email, last_name, first_name, company, title, description)
-    return _python_upsert_lead(email, last_name, first_name, company, title, description)
-
-
-def _mcp_upsert_lead(
-    email: str,
-    last_name: str,
-    first_name: str,
-    company: str,
-    title: str,
-    description: str,
-) -> dict[str, Any]:
-    existing, obj = _mcp_find_person_by_email(email)
+    existing, obj = find_person_by_email(email)
     if existing and obj == "Contact":
         return {"action": "found_contact", "id": existing["Id"], "object": obj}
 
@@ -273,73 +233,12 @@ def _mcp_upsert_lead(
         payload["Description"] = description[:32000]
 
     if existing and obj == "Lead":
-        payload["Id"] = existing["Id"]
-        mcp_dml_records("update", "Lead", [payload])
+        _run_dml("update", "Lead", {**payload, "Id": existing["Id"]})
         return {"action": "updated", "id": existing["Id"], "object": "Lead"}
 
-    mcp_dml_records("insert", "Lead", [payload])
-    created, _ = _mcp_find_person_by_email(email)
-    return {
-        "action": "created",
-        "id": created["Id"] if created else "",
-        "object": "Lead",
-    }
-
-
-def _python_upsert_lead(
-    email: str,
-    last_name: str,
-    first_name: str,
-    company: str,
-    title: str,
-    description: str,
-) -> dict[str, Any]:
-    sf = get_salesforce_client()
-    existing, obj = _python_find_person_by_email(email)
-    if existing and obj == "Contact":
-        return {"action": "found_contact", "id": existing["Id"], "object": obj}
-
-    payload: dict[str, Any] = {
-        "Email": email,
-        "LastName": last_name or email.split("@")[0],
-        "Company": company or "Unknown",
-        "LeadSource": "Product Marketing Agent",
-    }
-    if first_name:
-        payload["FirstName"] = first_name
-    if title:
-        payload["Title"] = title
-    if description:
-        payload["Description"] = description[:32000]
-
-    if existing and obj == "Lead":
-        sf.Lead.update(existing["Id"], payload)
-        return {"action": "updated", "id": existing["Id"], "object": "Lead"}
-
-    created = sf.Lead.create(payload)
-    return {"action": "created", "id": created["id"], "object": "Lead"}
-
-
-def log_email_activity(
-    email: str,
-    subject: str,
-    body: str,
-    recipient_name: str = "",
-    company: str = "",
-    products: str = "",
-    reason: str = "",
-    sent_by: str = "",
-) -> dict[str, Any]:
-    details = {
-        "recipient_name": recipient_name,
-        "company": company,
-        "products": products,
-        "reason": reason,
-        "sent_by": sent_by,
-    }
-    if uses_mcp_server():
-        return _mcp_log_email_activity(email, subject, body, recipient_name, company, details)
-    return _python_log_email_activity(email, subject, body, recipient_name, company, details)
+    _run_dml("insert", "Lead", payload)
+    created, _ = find_person_by_email(email)
+    return {"action": "created", "id": created["Id"] if created else "", "object": "Lead"}
 
 
 def _build_email_task(email: str, subject: str, body: str, who_id: str, details: dict[str, Any]) -> dict[str, Any]:
@@ -366,104 +265,39 @@ def _build_email_task(email: str, subject: str, body: str, who_id: str, details:
     }
 
 
-def _assert_dml_succeeded(output: str) -> None:
-    """Raise if an MCP salesforce_dml_records call did not insert/update successfully."""
-    match = re.search(r"Successful:\s*(\d+)", output)
-    if match and int(match.group(1)) >= 1:
-        return
-    raise RuntimeError(output.strip() or "Salesforce DML reported no successful records")
-
-
-def _mcp_log_email_activity(
+def log_email_activity(
     email: str,
     subject: str,
     body: str,
-    recipient_name: str,
-    company: str,
-    details: dict[str, Any],
+    recipient_name: str = "",
+    company: str = "",
+    products: str = "",
+    reason: str = "",
+    sent_by: str = "",
 ) -> dict[str, Any]:
-    safe = _escape_soql(email.strip())
-    calls: list[tuple[str, dict[str, Any]]] = [
-        (
-            "salesforce_query_records",
-            {
-                "objectName": "Lead",
-                "fields": ["Id", "Name", "Email"],
-                "whereClause": f"Email = '{safe}'",
-                "limit": 1,
-            },
-        ),
-        (
-            "salesforce_query_records",
-            {
-                "objectName": "Contact",
-                "fields": ["Id", "Name", "Email"],
-                "whereClause": f"Email = '{safe}'",
-                "limit": 1,
-            },
-        ),
-    ]
-    outputs = call_mcp_tools_batch(calls)
-    who_id = ""
-    obj = "Lead"
-    for text, object_type in zip(outputs, ("Lead", "Contact")):
-        rows = parse_query_records(text)
-        if rows:
-            who_id = rows[0].get("Id", "")
-            obj = object_type
-            break
-
-    if not who_id:
-        parts = recipient_name.strip().split(None, 1) if recipient_name.strip() else []
+    """Find/create the Lead or Contact, then log a completed Task with full email detail."""
+    record, obj = find_person_by_email(email)
+    if record:
+        who_id = record["Id"]
+    else:
+        parts = recipient_name.strip().split(None, 1)
         first = parts[0] if len(parts) > 1 else ""
         last = parts[1] if len(parts) > 1 else (parts[0] if parts else email.split("@")[0])
-        upsert = _mcp_upsert_lead(
+        upsert = upsert_lead(
             email=email,
             first_name=first,
             last_name=last,
             company=company,
-            title="",
             description=f"Outreach email subject: {subject}",
         )
-        who_id = upsert["id"]
-        obj = upsert["object"]
+        who_id, obj = upsert["id"], upsert["object"]
 
-    task_payload = _build_email_task(email, subject, body, who_id, details)
-    insert_out = call_mcp_tools_batch([("salesforce_dml_records", {
-        "operation": "insert",
-        "objectName": "Task",
-        "records": [task_payload],
-    })])
-    _assert_dml_succeeded(insert_out[0] if insert_out else "")
+    details = {
+        "recipient_name": recipient_name,
+        "company": company,
+        "products": products,
+        "reason": reason,
+        "sent_by": sent_by,
+    }
+    _run_dml("insert", "Task", _build_email_task(email, subject, body, who_id, details))
     return {"task_id": "logged", "who_id": who_id, "object": obj, "email": email}
-
-
-def _python_log_email_activity(
-    email: str,
-    subject: str,
-    body: str,
-    recipient_name: str,
-    company: str,
-    details: dict[str, Any],
-) -> dict[str, Any]:
-    sf = get_salesforce_client()
-    record, obj = _python_find_person_by_email(email)
-
-    if not record:
-        parts = recipient_name.strip().split(None, 1) if recipient_name.strip() else []
-        first = parts[0] if parts else ""
-        last = parts[1] if len(parts) > 1 else (parts[0] if parts else email.split("@")[0])
-        upsert = _python_upsert_lead(
-            email=email,
-            first_name=first if len(parts) > 1 else "",
-            last_name=last,
-            company=company,
-            description=f"Outreach email subject: {subject}",
-        )
-        who_id = upsert["id"]
-        obj = upsert["object"]
-    else:
-        who_id = record["Id"]
-
-    result = sf.Task.create(_build_email_task(email, subject, body, who_id, details))
-    return {"task_id": result["id"], "who_id": who_id, "object": obj, "email": email}
