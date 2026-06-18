@@ -163,10 +163,6 @@ def search_kb_hits(query: str, top_k: int = 8, excerpt_len: int = 240) -> list[d
         return []
 
 
-def search_with_scores(query: str, top_k: int = 8) -> list[tuple[str, float]]:
-    return [(hit["content"], hit["score"]) for hit in search_kb_hits(query, top_k=top_k)]
-
-
 def get_document_count() -> int:
     try:
         return qdrant_client.get_collection(COLLECTION_NAME).points_count

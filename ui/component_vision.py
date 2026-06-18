@@ -8,11 +8,6 @@ from pathlib import Path
 
 import streamlit as st
 
-from services.vector_db_service import (
-    get_component_image_count,
-    match_component_image_bytes,
-)
-
 
 def tier_label(tier: str, percent: int) -> tuple[str, str]:
     mapping = {
@@ -31,20 +26,12 @@ def tier_label(tier: str, percent: int) -> tuple[str, str]:
     return label, color
 
 
-def _tier_label(tier: str, percent: int) -> tuple[str, str]:
-    return tier_label(tier, percent)
-
-
 def confidence_bar_html(percent: int, color: str) -> str:
     return (
         f'<div class="conf-track">'
         f'<div class="conf-fill" style="width:{min(percent, 100)}%;background:{color}"></div>'
         f"</div>"
     )
-
-
-def _confidence_bar(percent: int, color: str) -> str:
-    return confidence_bar_html(percent, color)
 
 
 def match_card_html(match: dict, rank: int) -> str:
@@ -182,92 +169,3 @@ def render_catalog_matches_panel(
         st.markdown(match_card_html(match, rank), unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _render_match_card(match: dict, rank: int, query_bytes: bytes | None) -> None:
-    query_summary = (match.get("query_summary") or "").strip()
-
-    left, right = st.columns([1, 1.2])
-    with left:
-        if query_bytes:
-            st.caption("Your photo")
-            st.image(query_bytes, width=140)
-        image_path = match.get("image_path") or ""
-        if image_path and Path(image_path).exists():
-            st.caption("Catalog reference")
-            st.image(image_path, width=140)
-    with right:
-        st.markdown(match_card_html(match, rank), unsafe_allow_html=True)
-    if rank == 1 and query_summary:
-        st.caption(f"Query understood as: {query_summary}")
-
-
-def render_component_vision_page(on_explain_match) -> None:
-    """Fast visual match workspace (skips full agent graph for speed)."""
-    catalog_count = get_component_image_count()
-
-    st.markdown(
-        '<div class="vision-hero">'
-        "<h3>Component Vision</h3>"
-        "<p>Hybrid matching: CLIP visual search + Claude vision re-rank + text KB. "
-        f"<strong>{catalog_count}</strong> photo(s) in catalog.</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    if catalog_count == 0:
-        st.warning("Add component photos in the sidebar first (**Add Component Photos**).")
-
-    col_in, col_out = st.columns([1, 1.35], gap="large")
-
-    with col_in:
-        st.markdown("**1. Upload query photo**")
-        query_file = st.file_uploader(
-            "Query component photo",
-            type=["png", "jpg", "jpeg", "webp"],
-            key="vision_query_photo",
-            label_visibility="collapsed",
-        )
-        query_bytes = query_file.getvalue() if query_file is not None else None
-        if query_bytes:
-            st.image(query_bytes, caption=getattr(query_file, "name", "Query"), width=200)
-
-        run_match = st.button(
-            "⚡ Run visual match",
-            type="primary",
-            disabled=not query_bytes or catalog_count == 0,
-            use_container_width=True,
-        )
-
-        if run_match and query_bytes:
-            with st.spinner("CLIP search → Claude re-rank…"):
-                results = match_component_image_bytes(
-                    query_bytes,
-                    filename=getattr(query_file, "name", "query.jpg"),
-                )
-            st.session_state.last_match_results = results
-            st.session_state.last_query_image = query_bytes
-            st.session_state.last_query_name = getattr(query_file, "name", "")
-
-        st.caption("Typical time: 3–8s depending on vision model.")
-
-    with col_out:
-        st.markdown("**2. Match results**")
-        results = st.session_state.get("last_match_results") or []
-        stored_query = st.session_state.get("last_query_image")
-
-        if not results:
-            st.markdown(
-                '<div class="vision-empty">Upload a photo and run visual match to see ranked catalog hits.</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            best = results[0].get("match_percent", 0)
-            st.success(f"Best match: **{best}%** — {results[0].get('name') or results[0].get('sku') or 'catalog hit'}")
-            for index, match in enumerate(results[:5], start=1):
-                _render_match_card(match, index, stored_query if index == 1 else None)
-                st.divider()
-
-            if st.button("💬 Explain best match with AI", use_container_width=True):
-                on_explain_match(results, stored_query)
-                st.info("Switch to the **Chat** tab to see the AI explanation.")

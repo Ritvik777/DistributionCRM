@@ -5,12 +5,6 @@ def _merge(a: list, b: list) -> list:
     return a + b
 
 
-class ChatMessage(TypedDict, total=False):
-    role: str
-    content: str
-    agent: str
-
-
 class AgentState(TypedDict):
     question: str
     chat_history: list[dict]

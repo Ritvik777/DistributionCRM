@@ -62,17 +62,6 @@ def run_component_image_match(image_b64: str) -> tuple[str, list[dict], list[dic
     return context, matches, kb_sources
 
 
-def run_component_image_match_bytes(
-    image_bytes: bytes,
-    *,
-    filename: str = "query.jpg",
-) -> tuple[str, list[dict], list[dict]]:
-    matches = match_component_image_bytes(image_bytes, filename=filename)
-    context = format_component_match_context(matches)
-    kb_sources = kb_sources_for_matches(matches)
-    return context, matches, kb_sources
-
-
 def resolve_component_context(
     *,
     component_matches: list[dict] | None,

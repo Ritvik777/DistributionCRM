@@ -14,7 +14,6 @@ from services.salesforce_client import (
 from services.salesforce_mcp import parse_query_records
 
 DEFAULT_LEAD_FIELDS = ["Id", "Name", "Email", "Company", "Title", "Status", "LastModifiedDate", "CreatedDate"]
-OUTREACH_LEAD_FIELDS = ["Id", "Name", "Email", "Company", "Title", "Status"]
 
 
 def fetch_latest_leads(limit: int = 10) -> list[dict[str, Any]]:
@@ -125,7 +124,6 @@ def query_records_as_text(
 
 __all__ = [
     "DEFAULT_LEAD_FIELDS",
-    "OUTREACH_LEAD_FIELDS",
     "fetch_latest_leads",
     "fetch_recent_outreach_recipients",
     "fetch_leads_for_time_window",

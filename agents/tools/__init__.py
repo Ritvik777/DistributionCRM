@@ -5,7 +5,7 @@ agents/tools/ — Shared agent tools, grouped by concern.
   web.py            → web_search (DuckDuckGo)
   apollo.py         → apollo_search (Apollo.io leads)
   salesforce.py     → Salesforce CRM tools (query/dml/search/upsert)
-  email.py          → send_email (Brevo)
+  email.py          → deliver_brevo_email (Brevo send helper)
   runner.py         → call_tools (LLM tool-routing loop)
 """
 
@@ -21,7 +21,6 @@ from agents.tools.salesforce import (
     salesforce_search_objects,
     salesforce_describe_object,
 )
-from agents.tools.email import send_email
 from agents.tools.runner import call_tools
 
 __all__ = [
@@ -35,6 +34,5 @@ __all__ = [
     "salesforce_aggregate_query",
     "salesforce_search_objects",
     "salesforce_describe_object",
-    "send_email",
     "call_tools",
 ]

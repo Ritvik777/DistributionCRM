@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 import requests
@@ -76,8 +75,3 @@ def catalog_image_attachment_path(match: dict) -> str | None:
     if image_path and Path(image_path).is_file():
         return image_path
     return None
-
-
-def attachment_filename_for_match(match: dict) -> str:
-    sku = re.sub(r"[^\w.\-]+", "_", (match.get("sku") or "catalog").strip())[:40]
-    return f"catalog_{sku or 'product'}.jpg"

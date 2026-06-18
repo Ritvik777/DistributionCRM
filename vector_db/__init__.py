@@ -9,7 +9,6 @@ vector_db/ — Everything related to the vector database
 from vector_db.database import (
     add_documents,
     add_chunks,
-    search_with_scores,
     search_kb_hits,
     get_document_count,
     list_sources,

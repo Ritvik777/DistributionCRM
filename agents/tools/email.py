@@ -3,10 +3,8 @@ import logging
 from pathlib import Path
 
 import requests
-from langchain_core.tools import tool
 
 from config import BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME
-from observability import log_span
 
 logger = logging.getLogger(__name__)
 
@@ -75,20 +73,3 @@ def deliver_brevo_email(
         return f"FAILED (status {resp.status_code}): {resp.text[:300]}"
     except Exception as exc:
         return f"ERROR: {exc}"
-
-
-@tool
-@log_span(span_type="tool", name="send_email")
-def send_email(
-    to_email: str,
-    subject: str,
-    html_body: str,
-    attachment_paths: list[str] | None = None,
-) -> str:
-    """Send a personalized marketing email via Brevo. Provide recipient email, subject line, and HTML body."""
-    return deliver_brevo_email(
-        to_email,
-        subject,
-        html_body,
-        attachment_paths=attachment_paths,
-    )
