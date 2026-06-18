@@ -1,4 +1,4 @@
-from vector_db import add_documents, add_chunks, get_document_count, list_sources, delete_by_source, reindex_source, search_kb_hits
+from vector_db import add_documents, add_chunks, get_document_count, search_kb_hits
 from vector_db.component_store import (
     delete_component_image,
     get_component_count,
@@ -11,18 +11,6 @@ from vector_db.chunker import extract_chunks_from_pdf, extract_chunks_from_excel
 
 def get_doc_count() -> int:
     return get_document_count()
-
-
-def get_kb_sources() -> list[dict]:
-    return list_sources()
-
-
-def remove_kb_source(source: str) -> int:
-    return delete_by_source(source)
-
-
-def reindex_kb_source(source: str) -> int:
-    return reindex_source(source)
 
 
 def add_text_documents(raw_text: str) -> int:

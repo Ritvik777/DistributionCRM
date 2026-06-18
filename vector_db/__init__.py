@@ -11,9 +11,7 @@ from vector_db.database import (
     add_chunks,
     search_kb_hits,
     get_document_count,
-    list_sources,
     delete_by_source,
-    reindex_source,
 )
 from vector_db.chunker import (
     Chunk,

@@ -19,13 +19,10 @@ from services.vector_db_service import (
     add_excel_document,
     add_csv_document,
     add_component_image,
-    get_kb_sources,
     get_component_catalog,
     get_component_image_count,
     match_component_image_bytes,
     remove_component_image,
-    remove_kb_source,
-    reindex_kb_source,
 )
 from services.agent_service import ask_agent, confirm_send_email
 from ui.component_vision import render_catalog_matches_panel
@@ -526,39 +523,6 @@ def _render_data_panel() -> None:
                     st.caption(f"+ {len(catalog) - 5} more")
 
 
-def _render_manage_panel() -> None:
-    with st.expander("Manage indexed data", expanded=False):
-        try:
-            sources = get_kb_sources()
-        except Exception as error:
-            st.error(f"Could not load sources: {error}")
-            return
-        if not sources:
-            st.caption("No indexed sources yet. Upload docs above.")
-            return
-        for index, item in enumerate(sources):
-            source = item["source"]
-            chunks = item["chunks"]
-            col1, col2, col3 = st.columns([3, 1, 1])
-            col1.caption(f"**{source}** — {chunks} chunks")
-            if col2.button("Re-index", key=f"reindex_{index}", use_container_width=True):
-                try:
-                    with st.spinner(f"Re-indexing {source}..."):
-                        count = reindex_kb_source(source)
-                    st.success(f"Re-indexed {count} chunks for {source}")
-                    st.rerun()
-                except Exception as error:
-                    st.error(str(error))
-            if col3.button("Delete", key=f"delete_{index}", use_container_width=True):
-                try:
-                    with st.spinner(f"Deleting {source}..."):
-                        removed = remove_kb_source(source)
-                    st.success(f"Removed {removed} chunks from {source}")
-                    st.rerun()
-                except Exception as error:
-                    st.error(str(error))
-
-
 def _render_how_it_works() -> None:
     with st.expander("About", expanded=False):
         st.markdown("""
@@ -600,7 +564,6 @@ def render_sidebar(doc_count: int) -> None:
                 unsafe_allow_html=True,
             )
         _render_data_panel()
-        _render_manage_panel()
         _render_how_it_works()
         if _salesforce_ready() or _env_set("BREVO_API_KEY"):
             st.caption("Connected: " + ", ".join(
