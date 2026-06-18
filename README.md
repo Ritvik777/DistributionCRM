@@ -14,6 +14,20 @@ Project docs (GitHub Pages): [TradeFlow Agent walkthrough](https://ritvik777.git
 
 ---
 
+## How VLM agents help product distribution
+
+Product distribution slows down at the points where a human has to look at something, recognize it, and translate it into the next business action. TradeFlow Agent uses **Vision-Language Model (VLM) agents** to remove those bottlenecks across the distribution pipeline:
+
+- **Part identification from a photo** — A field rep, customer, or warehouse worker snaps a photo of an unlabeled component. The GTM VLM agent captions the image (Claude vision), retrieves visually similar candidates from the CLIP image catalog, and re-ranks them to return the matching SKU with a confidence score — no part number required. This collapses the slowest step in distribution (figuring out *what* the part is) from minutes of manual catalog search to one message.
+- **Catalog match → quote** — Once the SKU is identified, the same conversation pulls pricing and product context from the knowledge base, so an identified part flows straight into an accurate quote instead of a separate lookup.
+- **Vision-grounded outreach** — The outreach agent can inline the matched catalog image directly into B2B emails, so prospects see the exact part being offered. Visual confirmation reduces back-and-forth and wrong-part orders.
+- **Closing the loop into CRM** — Identified parts and completed sends are logged as Salesforce records/tasks, so every photo-driven interaction becomes structured pipeline data (part enquiries, leads, follow-ups) that distribution teams can query and forecast against.
+- **Reliability at scale** — Because matching combines CLIP retrieval with VLM re-ranking (rather than a single black-box model), results stay explainable — confidence %, caption, and candidate pool are all surfaced. Galileo tracing records every vision and routing decision, which matters when distribution decisions depend on the agent being right.
+
+**Net effect:** a photo taken anywhere in the distribution chain — field, counter, or warehouse — becomes an identified part, a priced quote, an outbound email, and a CRM record, in one conversation.
+
+---
+
 ## Architecture (Current)
 
 ### Graph flow
