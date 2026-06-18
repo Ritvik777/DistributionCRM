@@ -38,7 +38,7 @@ CATALOG_IMAGE_TEMP_UPLOAD = os.getenv("CATALOG_IMAGE_TEMP_UPLOAD", "true").strip
 # Email (Brevo)
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 BREVO_FROM_EMAIL = os.getenv("BREVO_FROM_EMAIL", "")
-BREVO_FROM_NAME = os.getenv("BREVO_FROM_NAME", "Product Distribution Team")
+BREVO_FROM_NAME = os.getenv("BREVO_FROM_NAME", "TradeFlow Team")
 
 # Apollo
 APOLLO_API_KEY = os.getenv("APOLLO_API_KEY", "")

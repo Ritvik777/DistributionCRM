@@ -1,8 +1,7 @@
-# Product Marketing — Evaluations and Project Run Guide
+# TradeFlow Agent — Evaluations and Project Run Guide
 
-This folder contains the evaluation harness for the **Product Marketing** multi-agent assistant.
-The system is designed to run two branches from one entrypoint: **GTM support** and **Outreach execution**.  
-Runtime flow is: classify request -> run branch nodes -> apply gate logic -> produce answer/send action, with Galileo tracing and eval logging across the full path.
+This folder contains the evaluation harness for **TradeFlow Agent**.
+The system routes each request to **GTM**, **Outreach**, or **CRM** from one entrypoint.
 
 **Click here for Technical Understanding Blog:** [https://ritvik777.github.io/AI-Market/](https://ritvik777.github.io/AI-Market/)
 

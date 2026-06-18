@@ -1,6 +1,6 @@
-# Product Distribution Agent — Multi-Agent RAG with Observations & Evals
+# TradeFlow Agent — From part photo to pipeline
 
-This repository is a **Product Distribution Agent** built with LangGraph — a multi-agent assistant for catalog lookup, customer outreach, and Salesforce CRM in one conversation.
+This repository is **TradeFlow Agent** built with LangGraph — a multi-agent assistant that takes you from **part photo → catalog match → quote → outreach → CRM**, in one conversation.
 
 Each user request is routed to the correct specialist branch, then processed through branch-specific nodes that gather context, apply business gates (pricing email verification or send intent), and return a final response with full trace visibility.
 

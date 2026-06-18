@@ -1,7 +1,6 @@
 import html
 import base64
 import streamlit as st
-import os
 from uuid import uuid4
 from config import GALILEO_DEBUG_URLS
 from agents.constants import SEND_CONFIRM_PHRASES
@@ -25,11 +24,13 @@ from services.vector_db_service import (
     remove_component_image,
 )
 from services.agent_service import ask_agent, confirm_send_email
+from services.health_service import check_all_systems, core_systems_healthy, summarize_health
 from ui.component_vision import render_catalog_matches_panel
 from observability import start_chat_session, get_console_links
 from vector_db.vision import ImageUploadTooLargeError, assert_image_upload_size, max_image_upload_label
 
-APP_NAME = "Product Distribution Agent"
+APP_NAME = "TradeFlow Agent"
+APP_TAGLINE = "From part photo to pipeline"
 
 STYLE_BLOCK = """
 <style>
@@ -47,7 +48,16 @@ STYLE_BLOCK = """
         --outreach: #0d9488; --outreach-bg: #ccfbf1;
         --crm: #6d28d9;      --crm-bg: #ede9fe;
     }
-    .stApp { background: var(--app-bg) !important; color: var(--text-main) !important; }
+    .health-summary { font-size: 0.8rem; color: var(--text-muted); margin: 0.35rem 0 0.5rem; }
+    .health-row {
+        display: flex; align-items: flex-start; gap: 0.45rem;
+        font-size: 0.78rem; line-height: 1.35; margin: 0.2rem 0;
+        color: var(--text-main);
+    }
+    .health-dot { flex-shrink: 0; width: 0.55rem; height: 0.55rem; border-radius: 50%; margin-top: 0.28rem; }
+    .health-dot-up { background: #16a34a; }
+    .health-dot-down { background: #dc2626; }
+    .health-dot-off { background: #9ca3af; }
     [data-testid="stAppViewContainer"] { background: var(--app-bg) !important; }
     [data-testid="stHeader"] { background: transparent !important; }
     [data-testid="stSidebar"] {
@@ -351,6 +361,7 @@ def initialize_session_state() -> None:
     st.session_state.setdefault("last_query_name", "")
     st.session_state.setdefault("chat_attach_key", 0)
     st.session_state.setdefault("pending_component_matches", [])
+    st.session_state.setdefault("health_report", None)
     if not st.session_state.messages:
         st.session_state.galileo_session_started = False
         st.session_state.galileo_debug_links_shown = False
@@ -417,20 +428,6 @@ def _render_kb_sources(sources: list[dict]) -> None:
                 f"</div>",
                 unsafe_allow_html=True,
             )
-
-
-def _salesforce_ready() -> bool:
-    try:
-        from services.salesforce_client import is_salesforce_configured
-
-        return is_salesforce_configured()
-    except Exception:
-        return False
-
-
-def _env_set(name: str, placeholder_prefix: str = "your-") -> bool:
-    value = (os.getenv(name) or "").strip()
-    return bool(value) and not value.startswith(placeholder_prefix)
 
 
 def _stat_card(number, label: str) -> str:
@@ -529,10 +526,44 @@ def _render_data_panel() -> None:
                     st.caption(f"+ {len(catalog) - 5} more")
 
 
+def _health_dot_class(status: str) -> str:
+    return {"up": "health-dot-up", "down": "health-dot-down", "off": "health-dot-off"}.get(status, "health-dot-off")
+
+
+def _render_health_panel() -> None:
+    with st.expander("System health", expanded=False):
+        refresh_col, _ = st.columns([1, 2])
+        with refresh_col:
+            if st.button("Refresh", key="health_refresh", use_container_width=True):
+                st.session_state.health_report = None
+
+        if st.session_state.get("health_report") is None:
+            with st.spinner("Checking integrations…"):
+                st.session_state.health_report = check_all_systems()
+
+        report = st.session_state.health_report or []
+        up, down, off = summarize_health(report)
+        core_ok = core_systems_healthy(report)
+        summary_tone = "Core systems OK" if core_ok else "Core system issue — check required items"
+        st.markdown(
+            f'<div class="health-summary">{summary_tone} · {up} up · {down} down · {off} optional/off</div>',
+            unsafe_allow_html=True,
+        )
+        for item in report:
+            dot_class = _health_dot_class(item.status)
+            st.markdown(
+                f'<div class="health-row">'
+                f'<span class="health-dot {dot_class}"></span>'
+                f"<span><strong>{html.escape(item.name)}</strong> — "
+                f"{html.escape(item.detail)}</span></div>",
+                unsafe_allow_html=True,
+            )
+
+
 def _render_how_it_works() -> None:
     with st.expander("About", expanded=False):
         st.markdown("""
-**Product Distribution Agent** handles catalog lookup, customer emails, and Salesforce CRM in one conversation.
+**TradeFlow Agent** handles part photo identification, catalog lookup, customer emails, and Salesforce CRM in one conversation — from part photo to pipeline.
 
 Upload documents and catalog images from the sidebar to get started.
 """)
@@ -556,7 +587,7 @@ def render_sidebar(doc_count: int) -> None:
     with st.sidebar:
         st.markdown(f'<div class="sidebar-brand">{APP_NAME}</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="sidebar-tag">Distribution · catalog · CRM</div>',
+            f'<div class="sidebar-tag">{APP_TAGLINE}</div>',
             unsafe_allow_html=True,
         )
         if st.button("New conversation", use_container_width=True):
@@ -564,6 +595,7 @@ def render_sidebar(doc_count: int) -> None:
             st.rerun()
         st.divider()
         _render_stats(doc_count)
+        _render_health_panel()
         if st.session_state.get("pending_drafts") and _draft_has_recipient(st.session_state.pending_drafts):
             st.markdown(
                 '<div class="send-banner">Email draft ready — confirm below the chat.</div>',
@@ -571,14 +603,6 @@ def render_sidebar(doc_count: int) -> None:
             )
         _render_data_panel()
         _render_how_it_works()
-        if _salesforce_ready() or _env_set("BREVO_API_KEY"):
-            st.caption("Connected: " + ", ".join(
-                name for name, ok in [
-                    ("Salesforce", _salesforce_ready()),
-                    ("Email", _env_set("BREVO_API_KEY")),
-                    ("Catalog", _env_set("QDRANT_URL")),
-                ] if ok
-            ))
 
 
 def _execute_confirm_send() -> None:
@@ -692,7 +716,7 @@ def render_chat_composer() -> tuple[str, bytes | None, str]:
             )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    typed = st.chat_input("Message Product Distribution Agent…")
+    typed = st.chat_input("Message TradeFlow Agent…")
     prompt = typed or st.session_state.pop("queued_prompt", "")
     return prompt, image_bytes, image_name
 

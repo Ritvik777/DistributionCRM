@@ -157,7 +157,7 @@ def main() -> None:
             function=run_agent,
             experiment_tags={
                 "suite": "baseline",
-                "app": "product-marketing",
+                "app": "tradeflow",
                 "agents": "gtm,outreach,crm",
                 "examples": str(len(DATASET)),
             },

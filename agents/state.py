@@ -4,7 +4,7 @@ from typing import TypedDict, Annotated
 def _merge(a: list, b: list) -> list:
     return a + b
 
-
+#states for the agent
 class AgentState(TypedDict):
     question: str
     chat_history: list[dict]

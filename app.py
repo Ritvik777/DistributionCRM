@@ -13,7 +13,7 @@ from ui.ui import (
 
 
 def main() -> None:
-    st.set_page_config(page_title="Product Distribution Agent", page_icon="📦", layout="wide")
+    st.set_page_config(page_title="TradeFlow Agent", page_icon="📦", layout="wide")
     apply_styles()
     initialize_session_state()
 
@@ -24,8 +24,8 @@ def main() -> None:
     if not st.session_state.messages:
         st.markdown(
             '<div class="app-hero">'
-            '<div class="app-hero-title">Product Distribution Agent</div>'
-            '<div class="app-hero-sub">Catalog · inventory · outreach · CRM</div>'
+            '<div class="app-hero-title">TradeFlow Agent</div>'
+            '<div class="app-hero-sub">From part photo to pipeline</div>'
             '</div>',
             unsafe_allow_html=True,
         )

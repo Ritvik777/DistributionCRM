@@ -41,7 +41,7 @@ def _leads_gate_decision(state: AgentState, config: RunnableConfig | None = None
         LeadsGateDecision,
         get_llm(temperature=0),
         (
-            "You are a gate in a Product Marketing outreach assistant.\n"
+            "You are a gate in the TradeFlow Agent outreach branch.\n"
             "Choose leads if the user wants to FIND new prospects/people/companies to contact (Apollo/net-new).\n"
             "Choose content if the user wants to write emails, posts, or marketing copy to known recipients.\n"
             "If the user wants to fetch/list existing Salesforce CRM records, that is handled elsewhere — choose content unless they want net-new Apollo research.\n"
@@ -67,7 +67,7 @@ def _send_intent_decision(state: AgentState, config: RunnableConfig | None = Non
         SendIntentDecision,
         get_llm(temperature=0),
         (
-            "You are a gate in a Product Marketing outreach assistant.\n"
+            "You are a gate in the TradeFlow Agent outreach branch.\n"
             "Choose send ONLY if the user explicitly wants immediate delivery of an existing draft "
             "(e.g. 'send it', 'send now', 'go ahead and send').\n"
             "Choose review for compose/draft/can-you-email requests or follow-up edits.\n"
@@ -238,7 +238,7 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
             tools=tools,
             config=config,
             system_prompt=(
-                "You are a product marketing research assistant. The user wants to find leads/prospects for outreach. You MUST:\n"
+                "You are the TradeFlow Agent research assistant. The user wants to find leads/prospects for outreach. You MUST:\n"
                 "1. Call apollo_search with relevant job titles\n"
                 "2. Call search_knowledge_base to get our product info for personalization\n"
                 f"{sf_hint}"
@@ -260,7 +260,7 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
             tools=content_tools,
             config=config,
             system_prompt=(
-                "You are a product marketing research assistant preparing outreach content.\n"
+                "You are the TradeFlow Agent research assistant preparing outreach content.\n"
                 "Use search_knowledge_base for product specs, SKU/part numbers, stock, price, MOQ, and lead time. "
                 "If conversation history or the current message mentions a product, search the KB for it.\n"
                 "Use web_search only for target company/industry info to personalize.\n"
@@ -296,7 +296,7 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
 
     if has_leads:
         prompt = (
-            "You are a product marketing outreach specialist. "
+            "You are a TradeFlow Agent outreach specialist. "
             "You have REAL leads (from Apollo or your Salesforce CRM) with their emails. "
             "For EACH lead that has an email, write a personalized product outreach email.\n\n"
             "Rules:\n"
@@ -337,7 +337,7 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             "'Pricing questions require email verification. Please ask for pricing directly and provide your work email.'"
         )
         prompt = (
-            "You are a product marketing content specialist. Create EXACTLY the marketing content the user asks for.\n"
+            "You are a TradeFlow Agent content specialist. Create EXACTLY the marketing content the user asks for.\n"
             f"- {_FORMAL_EMAIL_RULES}\n"
             "- Ground copy in our product context from the Context section and conversation history below\n"
             "- If emailing about product availability, include ALL specs from Context: part number, description, "

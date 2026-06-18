@@ -127,7 +127,7 @@ def log_span(*, span_type: str = "workflow", name: str | None = None) -> Callabl
     return _noop_decorator
 
 
-def get_eval_project(default: str = "product-marketing-evals") -> str:
+def get_eval_project(default: str = "tradeflow-evals") -> str:
     # Evals can log into a separate Galileo project if desired.
     return os.getenv("GALILEO_EVAL_PROJECT") or GALILEO_PROJECT or default
 

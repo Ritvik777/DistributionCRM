@@ -164,6 +164,18 @@ def _run_dml(operation: str, object_name: str, record: dict[str, Any]) -> None:
     _with_python_client(_do)
 
 
+def ping_salesforce() -> tuple[bool, str]:
+    """Lightweight CRM connectivity check for UI health panel."""
+    if not is_salesforce_configured():
+        return True, "Not configured"
+    backend = "MCP" if uses_mcp_server() else "REST"
+    try:
+        _run_query("Lead", ["Id"], limit=1)
+        return True, f"Connected ({backend})"
+    except Exception as exc:
+        return False, str(exc)[:140]
+
+
 # --- High-level CRM operations (written once) --------------------------------
 
 def fetch_record_by_id(record_id: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -374,7 +386,7 @@ def upsert_lead(
         "Email": email,
         "LastName": last_name or email.split("@")[0],
         "Company": company or "Unknown",
-        "LeadSource": "Product Marketing Agent",
+        "LeadSource": "TradeFlow Agent",
     }
     if first_name:
         payload["FirstName"] = first_name
@@ -396,7 +408,7 @@ def _build_email_task(email: str, subject: str, body: str, who_id: str, details:
     """Assemble a rich, fully-detailed Salesforce Task for a sent outreach email."""
     sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     description = (
-        "=== Outreach Email Logged by Product Marketing Agent ===\n"
+        "=== Outreach Email Logged by TradeFlow Agent ===\n"
         f"Recipient: {details.get('recipient_name') or '-'} <{email}>\n"
         f"Company: {details.get('company') or '-'}\n"
         f"Sent By: {details.get('sent_by') or '-'}\n"

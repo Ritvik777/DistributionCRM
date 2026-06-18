@@ -11,7 +11,7 @@ from observability import merge_node_config
 
 logger = logging.getLogger(__name__)
 
-_ROUTING_PROMPT = """You are the routing layer for a Product Marketing assistant with THREE specialist agents: GTM, OUTREACH, and CRM.
+_ROUTING_PROMPT = """You are the routing layer for TradeFlow Agent with THREE specialist agents: GTM, OUTREACH, and CRM.
 
 RULES — Route to GTM for:
 - Product questions, features, pricing, cost, plans, tiers, subscriptions
@@ -38,7 +38,7 @@ IMPORTANT: 'email X about product Y' or 'market product Y to X@email.com' → ou
 IMPORTANT: 'fetch leads from Salesforce', 'show CRM contacts', 'count opportunities by stage' → crm.
 IMPORTANT: 'find VP Sales leads in fintech to email' → outreach (net-new prospecting + send), NOT crm.
 
-If unrelated to product marketing, route gtm.
+If unrelated to catalog, outreach, or CRM, route gtm.
 
 Examples:
 - 'Do you have led-red-5mm?' → gtm

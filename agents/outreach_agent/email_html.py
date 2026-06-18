@@ -99,7 +99,7 @@ def build_formal_email_html(
     recipient_name: str = "",
 ) -> str:
     """Build a formal B2B HTML email with optional catalog product image."""
-    from_name = os.getenv("BREVO_FROM_NAME", "Product Distribution Team")
+    from_name = os.getenv("BREVO_FROM_NAME", "TradeFlow Team")
     from_email = os.getenv("BREVO_FROM_EMAIL", "")
 
     body_html = _paragraphs_to_html(body)

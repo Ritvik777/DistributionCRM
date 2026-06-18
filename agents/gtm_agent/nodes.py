@@ -50,7 +50,7 @@ def gtm_retrieve(state: AgentState, config: RunnableConfig | None = None) -> dic
         tools=[search_knowledge_base, web_search],
         config=config,
         system_prompt=(
-            "You are a product marketing specialist. Find product info and competitor data for the user's question from the knowledge base. "
+            "You are a TradeFlow Agent catalog specialist. Find product info and competitor data for the user's question from the knowledge base. "
             "Use conversation history to resolve references like 'this product'. "
             "If using search_knowledge_base, treat the data from it as ground truth. "
             "Use web_search for competitor/market data. "
@@ -77,7 +77,7 @@ def pricing_gate(state: AgentState, config: RunnableConfig | None = None) -> dic
         PricingGateDecision,
         get_llm(temperature=0),
         (
-            "You are a pricing gate for a Product Marketing assistant.\n"
+            "You are a pricing gate for TradeFlow Agent.\n"
             "Set is_pricing true if the user wants pricing, cost, or plan information about our product(s), "
             "regardless of output format (email template, table, etc.).\n\n"
             f"{turn}"
@@ -130,7 +130,7 @@ def gtm_generate(state: AgentState, config: RunnableConfig | None = None) -> dic
         )
     turn = build_turn_context(state)
     resp = llm.invoke(
-        f"You are a product marketing specialist for our company. Answer using the context below.{extra}\n"
+        f"You are a TradeFlow Agent catalog specialist for our company. Answer using the context below.{extra}\n"
         f"Product, pricing, competitor, and market questions are all IN SCOPE for GTM.\n"
         f"If the user asks to email, send, or market a product TO someone, reply briefly that outreach can handle that.\n"
         f"If the context lacks the needed market/competitor data (e.g. live web search returned nothing), "
