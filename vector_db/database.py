@@ -153,6 +153,8 @@ def search_kb_hits(query: str, top_k: int = 8, excerpt_len: int = 240) -> list[d
                     "score": round(float(point.score), 3),
                     "content": text,
                     "excerpt": excerpt,
+                    "image_id": meta.get("image_id") or "",
+                    "sku": meta.get("sku") or "",
                 }
             )
         return hits

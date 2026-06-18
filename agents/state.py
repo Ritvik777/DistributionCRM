@@ -18,6 +18,8 @@ class AgentState(TypedDict):
     context: str
     answer: str
     kb_sources: list[dict]
+    query_image_b64: str
+    component_matches: list[dict]
     is_pricing: bool
     user_email: str
     send_intent: bool

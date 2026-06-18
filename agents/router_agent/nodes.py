@@ -57,10 +57,21 @@ def classify(state: AgentState, config: RunnableConfig | None = None) -> dict:
     # Keyword routing must look at the CURRENT message only — using full history would
     # let a prior CRM turn (e.g. a leads table) hijack every later message.
     question = (state.get("question") or "").strip()
+    # Send/email intent wins even when a component photo is attached.
+    if is_outreach_request(question):
+        return {
+            "agent_type": "outreach",
+            "steps": ["Supervisor Routing Agent(keyword) → OUTREACH (send/email intent)"],
+        }
     if is_crm_request(question):
         return {
             "agent_type": "crm",
             "steps": ["Supervisor Routing Agent(keyword) → CRM"],
+        }
+    if (state.get("query_image_b64") or "").strip():
+        return {
+            "agent_type": "gtm",
+            "steps": ["Supervisor Routing Agent(image) → GTM (component verify)"],
         }
 
     invoke_config = merge_node_config(
@@ -87,7 +98,7 @@ def classify(state: AgentState, config: RunnableConfig | None = None) -> dict:
         agent = "crm"
         source = "crm_override"
     # A send/email intent must go to Outreach — the CRM agent cannot send email.
-    elif agent == "crm" and is_outreach_request(question):
+    elif is_outreach_request(question) and agent != "outreach":
         agent = "outreach"
         source = "outreach_override"
 

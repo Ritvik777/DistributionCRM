@@ -46,7 +46,7 @@ _CRM_TOOLS = [
 
 # Read verbs that justify the deterministic "latest leads" table fast-path.
 _READ_VERB_RE = re.compile(
-    r"\b(fetch|get|show|list|latest|recent|pull|retrieve|display|view|see)\b",
+    r"\b(fetch|get|show|list|latest|recent|last|pull|retrieve|display|view|see|give me)\b",
     re.IGNORECASE,
 )
 # Write/advanced signals: if present, do NOT use the fast-path — run the tool loop instead.
@@ -66,6 +66,28 @@ def _is_simple_leads_fetch(text: str) -> bool:
     return bool(_READ_VERB_RE.search(text))
 
 
+_SINGULAR_LEAD_RE = re.compile(
+    r"\b(?:the\s+)?(?:last|latest|newest|most recent)\s+lead\b",
+    re.IGNORECASE,
+)
+_COUNT_LEADS_RE = re.compile(
+    r"\b(?:last|latest|recent|top|first)\s+(\d+)\s+leads?\b",
+    re.IGNORECASE,
+)
+
+
+def _infer_leads_limit(text: str) -> int:
+    """Parse how many leads the user asked for; default 10 for generic plural requests."""
+    if _SINGULAR_LEAD_RE.search(text):
+        return 1
+    count_match = _COUNT_LEADS_RE.search(text) or re.search(r"\b(\d+)\s+leads?\b", text, re.IGNORECASE)
+    if count_match:
+        return max(1, min(int(count_match.group(1)), 50))
+    if re.search(r"\bleads\b", text, re.IGNORECASE):
+        return 10
+    return 1
+
+
 def _fetch_latest_leads(limit: int = 10) -> str:
     return salesforce_query_records.invoke({
         "object_name": "Lead",
@@ -75,15 +97,16 @@ def _fetch_latest_leads(limit: int = 10) -> str:
     })
 
 
-def _format_leads_markdown(raw: str) -> str:
+def _format_leads_markdown(raw: str, *, limit: int = 10) -> str:
     from services.salesforce_mcp import parse_query_records
 
     rows = parse_query_records(raw)
     if not rows:
         return "No leads found in Salesforce."
 
+    heading = "## Latest Salesforce Lead" if limit == 1 else "## Latest Salesforce Leads"
     lines = [
-        "## Latest Salesforce Leads",
+        heading,
         "",
         "| Name | Email | Company | Title | Status |",
         "| --- | --- | --- | --- | --- |",
@@ -113,11 +136,12 @@ def crm_research(state: AgentState, config: RunnableConfig | None = None) -> dic
     # Fast-path decision uses the CURRENT message only (history would falsely trigger it).
     if _is_simple_leads_fetch(question):
         try:
-            raw = _fetch_latest_leads(limit=10)
+            limit = _infer_leads_limit(question)
+            raw = _fetch_latest_leads(limit=limit)
             return {
                 "context": raw,
-                "answer": _format_leads_markdown(raw),
-                "steps": ["CRM Research → fast-path leads fetch (salesforce_query_records)"],
+                "answer": _format_leads_markdown(raw, limit=limit),
+                "steps": [f"CRM Research → fast-path leads fetch (limit={limit})"],
             }
         except Exception as exc:
             return {
@@ -132,7 +156,7 @@ def crm_research(state: AgentState, config: RunnableConfig | None = None) -> dic
         config=config,
         system_prompt=(
             "You are a Salesforce CRM specialist. Use the Salesforce tools to fulfill the user's request.\n"
-            "- Read/list records: salesforce_query_records (for latest leads use objectName Lead, orderBy CreatedDate DESC)\n"
+            "- Read/list records: salesforce_query_records (for latest leads use objectName Lead, orderBy CreatedDate DESC; use limit=1 when user asks for the last/latest/most recent lead only)\n"
             "- Counts/grouping: salesforce_aggregate_query\n"
             "- Create/update/delete records: salesforce_dml_records (or salesforce_upsert_lead for leads)\n"
             "- Inspect schema: salesforce_describe_object, salesforce_search_objects\n"

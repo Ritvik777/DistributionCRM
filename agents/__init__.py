@@ -31,6 +31,8 @@ def _base_state(
         "context": "",
         "answer": "",
         "kb_sources": [],
+        "query_image_b64": "",
+        "component_matches": [],
         "is_pricing": False,
         "user_email": "",
         "send_intent": False,
@@ -79,25 +81,38 @@ def ask(
     chat_history: list[dict] | None = None,
     send_confirmed: bool = False,
     pending_draft: str = "",
+    query_image_b64: str | None = None,
+    component_matches: list[dict] | None = None,
+    kb_sources: list[dict] | None = None,
 ) -> dict:
     if send_confirmed and pending_draft.strip():
         return confirm_send(pending_draft, chat_history=chat_history)
 
-    state = _base_state(question, chat_history)
+    overrides: dict = {"query_image_b64": query_image_b64 or ""}
+    if component_matches is not None:
+        overrides["component_matches"] = component_matches
+    if kb_sources is not None:
+        overrides["kb_sources"] = kb_sources
+    state = _base_state(question, chat_history, **overrides)
     return _invoke_with_tracing(state)
 
 
-def confirm_send(pending_draft: str, chat_history: list[dict] | None = None) -> dict:
+def confirm_send(
+    pending_draft: str,
+    chat_history: list[dict] | None = None,
+    component_matches: list[dict] | None = None,
+) -> dict:
     """UI-confirmed Brevo send — bypasses draft generation, runs outreach_send only."""
     ensure_galileo_initialized()
     question = "User confirmed send via UI"
-    state = _base_state(
-        question,
-        chat_history,
-        agent_type="outreach",
-        answer=pending_draft,
-        send_confirmed=True,
-    )
+    overrides: dict = {
+        "agent_type": "outreach",
+        "answer": pending_draft,
+        "send_confirmed": True,
+    }
+    if component_matches:
+        overrides["component_matches"] = component_matches
+    state = _base_state(question, chat_history, **overrides)
     config = get_langchain_config(metadata={"question": question, "send_confirmed": True})
 
     logger = get_logger_instance()

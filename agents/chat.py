@@ -29,6 +29,11 @@ _OUTREACH_VERB_RE = re.compile(
     r"send (an? )?(email|message|note)|write (a|an) (email|post|message|linkedin)|linkedin post)\b",
     re.IGNORECASE,
 )
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+_OUTREACH_RECIPIENT_RE = re.compile(
+    r"\b(send|mail|notify|tell|inform|contact|reach out)\b.*@|@\S+\s+(about|regarding|on|for)\b",
+    re.IGNORECASE,
+)
 
 
 def is_crm_request(text: str) -> bool:
@@ -63,7 +68,11 @@ def is_outreach_request(text: str) -> bool:
     """
     if _CRM_SIGNAL_RE.search(text):
         return False
-    return bool(_OUTREACH_VERB_RE.search(text))
+    if _OUTREACH_VERB_RE.search(text):
+        return True
+    if _EMAIL_RE.search(text) and _OUTREACH_RECIPIENT_RE.search(text):
+        return True
+    return False
 
 
 def wants_crm_list_fetch(text: str) -> bool:

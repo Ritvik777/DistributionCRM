@@ -13,7 +13,6 @@ from agents.tools import (
     search_knowledge_base,
     web_search,
     apollo_search,
-    send_email,
     call_tools,
     salesforce_search_leads,
     salesforce_query_records,
@@ -91,16 +90,32 @@ def _extract_emails(text: str) -> list[str]:
     return re.findall(EMAIL_PATTERN, text)
 
 
-def _body_to_html(body: str) -> str:
-    body = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", body)
-    body_html = "".join(
-        f'<p style="margin: 0 0 12px 0;">{p.strip()}</p>'
-        for p in body.split("\n\n")
-        if p.strip()
-    )
-    if not body_html:
-        body_html = body.replace("\n", "<br>")
-    return body_html
+from agents.outreach_agent.email_html import build_formal_email_html
+from agents.tools.email import deliver_brevo_email
+from services.catalog_image_host import (
+    catalog_image_attachment_path,
+    resolve_hosted_catalog_image_url,
+)
+from vector_db.component_store import find_catalog_match_by_sku
+
+_FORMAL_EMAIL_RULES = (
+    "Write a formal, professional B2B email suitable for an electronic components distributor.\n"
+    "- Open with 'Dear [First Name],' — use the recipient's name if known, otherwise 'Dear Customer,'\n"
+    "- Use complete sentences and a courteous, business-appropriate tone (no emoji, slang, or casual phrasing)\n"
+    "- Structure: brief introduction → product/availability details → clear next step → formal closing\n"
+    "- Include a 'Product Details' bullet list with SKU, description, package, and stock/availability status\n"
+    "- Keep the body to 2–3 short paragraphs plus the bullet list\n"
+    "- Do NOT repeat the signature block — the HTML template adds 'Best regards' automatically\n"
+    "- End the body with a single closing line such as 'Please let us know if you would like a formal quote.'\n"
+)
+
+_LEAD_EMAIL_FORMAT = (
+    "Format EACH email as:\n"
+    "**To: FirstName LastName** (their@email.com)\n"
+    "**Subject:** <formal, specific subject line mentioning the product or topic>\n"
+    "<formal email body — paragraphs and bullet lists only, no Subject/To lines in body>\n"
+    "---\n"
+)
 
 
 def _parse_email_drafts(content: str) -> list[dict[str, str]]:
@@ -221,9 +236,26 @@ def _salesforce_leads_context(turn: str, limit: int = 10) -> tuple[str, int, lis
     return block, len(leads), kb_sources
 
 
+def _component_match_context(state: AgentState) -> tuple[str, list[dict], list[dict]]:
+    """Reuse precomputed matches or run hybrid match for outreach email drafts."""
+    matches = state.get("component_matches") or []
+    image_b64 = (state.get("query_image_b64") or "").strip()
+    if matches:
+        from agents.gtm_agent.nodes import _format_component_match_context
+
+        return _format_component_match_context(matches), matches, []
+    if image_b64:
+        from agents.gtm_agent.nodes import _run_component_image_match
+
+        ctx, matches, kb_sources = _run_component_image_match(image_b64)
+        return ctx, matches, kb_sources
+    return "", [], []
+
+
 def outreach_research(state: AgentState, config: RunnableConfig | None = None) -> dict:
     turn = build_turn_context(state)
     question = (state.get("question") or "").strip()
+    component_ctx, component_matches, match_kb_sources = _component_match_context(state)
 
     # Cross-agent flow: "email the leads from Salesforce" → source recipients from CRM, then draft per lead.
     if is_salesforce_configured() and _wants_salesforce_leads(question):
@@ -281,11 +313,21 @@ def outreach_research(state: AgentState, config: RunnableConfig | None = None) -
         )
         path_label = "content"
 
-    return {
+    if component_ctx:
+        ctx = f"{component_ctx}\n\n{ctx}"
+        if not log:
+            log = ["component_image_match"]
+
+    result: dict = {
         "context": ctx,
         "kb_sources": kb_sources,
         "steps": [f"Outreach Research({source}) → {path_label}, {', '.join(log) or 'none'}"],
     }
+    if component_matches:
+        result["component_matches"] = component_matches
+    if match_kb_sources:
+        result["kb_sources"] = match_kb_sources + (kb_sources or [])
+    return result
 
 
 def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -> dict:
@@ -305,16 +347,11 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             "- Write ONLY emails, NOT LinkedIn posts\n"
             "- Use their actual name, title, company, and industry\n"
             "- Connect their likely pain points to our product benefits\n"
-            "- Keep each email 2-3 short paragraphs\n"
-            "- Sign off as 'The Product Marketing Team'\n"
+            f"- {_FORMAL_EMAIL_RULES}\n"
             "- NO placeholder text like [Your Name] — use real data only\n"
             "- Do NOT refuse and do NOT add commentary about whether a lead fits the product. "
             "Always write one email per lead and output ONLY the emails.\n\n"
-            "Format EACH email as:\n"
-            "**To: FirstName LastName** (their@email.com)\n"
-            "**Subject:** <personalized subject>\n"
-            "<email body>\n"
-            "---\n\n"
+            f"{_LEAD_EMAIL_FORMAT}\n\n"
             f"Leads + product info:\n{ctx}\n\n"
             f"{turn}\nContent:"
         )
@@ -327,9 +364,17 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
                 "Address the email to them and include their email in the output "
                 "using the format: **To:** name (email@example.com)\n"
             )
+        component_hint = ""
+        if state.get("component_matches"):
+            best = state["component_matches"][0]
+            sku = best.get("sku") or "see Context"
+            component_hint = (
+                "\nThe user attached a component photo with catalog match results in Context. "
+                f"Mention SKU {sku}, stock availability, and relevant specs in a formal tone. "
+                "The sent HTML email will include the catalog reference photo automatically — "
+                "you do not need to describe the image itself.\n"
+            )
 
-        # Galileo_FeedbackLoop_1: Defense in depth — never output full pricing in Outreach.
-        # Pricing requests should route to GTM; if one slips through, refuse to reveal pricing.
         pricing_safety = (
             "\nNEVER reveal specific pricing tiers, dollar amounts, or plan names. "
             "If the user asks for pricing information, respond: "
@@ -337,18 +382,21 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
         )
         prompt = (
             "You are a product marketing content specialist. Create EXACTLY the marketing content the user asks for.\n"
+            f"- {_FORMAL_EMAIL_RULES}\n"
             "- Ground copy in our product context from the Context section and conversation history below\n"
             "- If emailing about product availability, include ALL specs from Context: part number, description, "
-            "manufacturer, price, stock quantity, MOQ, lead time, package, voltage — never generic 'reply for details'\n"
+            "manufacturer, stock quantity, MOQ, lead time, package, voltage — never generic 'reply for details'\n"
             "- If they ask for a LinkedIn post: write ONLY a LinkedIn post\n"
             "- If they ask for an email: write ONLY an email with **To:** and **Subject:** lines\n"
             "- Do NOT create multiple content types\n"
             "- No placeholder text like [Your Name]\n"
-            "- Sign off as 'The Product Marketing Team'\n"
             f"{pricing_safety}\n"
             f"{recipient_hint}\n"
+            f"{component_hint}\n"
             f"Context:\n{ctx}\n\n"
-            f"{turn}\nContent:"
+            f"{turn}\n"
+            f"{_LEAD_EMAIL_FORMAT}\n"
+            "Content:"
         )
 
     resp = llm.invoke(
@@ -363,7 +411,7 @@ def outreach_generate(state: AgentState, config: RunnableConfig | None = None) -
             tags=["agent:outreach", "phase:generate"],
         ) or None,
     )
-    return {"answer": resp.content, "steps": [f"Outreach Generate → {len(resp.content)} chars"]}
+    return {"answer": resp.content, "steps": [f"Outreach Generate → {len(resp.content)} chars"], "component_matches": state.get("component_matches", [])}
 
 
 def send_gate(state: AgentState, config: RunnableConfig | None = None) -> dict:
@@ -379,6 +427,35 @@ def send_gate(state: AgentState, config: RunnableConfig | None = None) -> dict:
 
 def route_send(state: AgentState, config: RunnableConfig | None = None) -> str:
     return "send" if state.get("send_confirmed") else "review"
+
+
+def _resolve_component_matches_for_send(state: AgentState, draft_text: str) -> list[dict]:
+    """Best-effort catalog match for email image — state, then SKU in draft/context."""
+    matches = state.get("component_matches") or []
+    if matches and catalog_image_attachment_path(matches[0]):
+        return matches
+
+    haystack = " ".join(
+        filter(None, [draft_text, state.get("context", ""), state.get("question", "")])
+    )
+    for pattern in (
+        r"\bSKU[:\s]+([A-Za-z0-9][\w \-./]{2,})",
+        r"\b(?:part|item)\s*(?:#|number|no\.?)?[:\s]+([A-Za-z0-9][\w \-./]{2,})",
+    ):
+        for hit in re.findall(pattern, haystack, re.IGNORECASE):
+            sku = hit.strip().strip(".,;")
+            found = find_catalog_match_by_sku(sku)
+            if found:
+                return [found]
+
+    for token in _PART_TOKEN_RE.findall(haystack):
+        found = find_catalog_match_by_sku(token)
+        if found:
+            return [found]
+
+    if matches:
+        return matches
+    return []
 
 
 def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> dict:
@@ -413,23 +490,38 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
         metadata={"node": "outreach_send"},
         tags=["agent:outreach", "tool:send_email"],
     )
-    for draft in drafts:
-        body_html = _body_to_html(draft["body"])
-        html = f"""
-        <div style="font-family: -apple-system, Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1a1a1a; line-height: 1.6;">
-            {body_html}
-            <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 24px 0;">
-            <p style="font-size: 12px; color: #999;">Sent via Product Marketing</p>
-        </div>
-        """
+    image_notes: list[str] = []
 
-        result = send_email.invoke(
-            {
-                "to_email": draft["to_email"],
-                "subject": draft["subject"],
-                "html_body": html,
-            },
-            config=invoke_config,
+    for draft in drafts:
+        draft_blob = " ".join([draft.get("body", ""), draft.get("subject", "")])
+        component_matches = _resolve_component_matches_for_send(state, draft_blob)
+
+        catalog_image_url: str | None = None
+        attachment_paths: list[str] = []
+
+        if component_matches:
+            best = component_matches[0]
+            local_path = catalog_image_attachment_path(best)
+            catalog_image_url = resolve_hosted_catalog_image_url(best)
+            if catalog_image_url:
+                # Inline <img> only — do not also attach (was showing 2 copies in inbox).
+                image_notes.append(f"📷 {best.get('sku') or 'catalog'} → inline photo")
+            elif local_path:
+                attachment_paths.append(local_path)
+                image_notes.append(f"📎 {best.get('sku') or 'catalog'} → attachment")
+
+        html = build_formal_email_html(
+            draft["body"],
+            component_matches=component_matches,
+            catalog_image_url=catalog_image_url,
+            recipient_name=draft.get("recipient_name", ""),
+        )
+
+        result = deliver_brevo_email(
+            draft["to_email"],
+            draft["subject"],
+            html,
+            attachment_paths=attachment_paths or None,
         )
         if "SENT" in result:
             sent.append(draft["to_email"])
@@ -453,6 +545,8 @@ def outreach_send(state: AgentState, config: RunnableConfig | None = None) -> di
             failed.append(f"{draft['to_email']} ({result})")
 
     summary = ""
+    if image_notes:
+        summary += " ".join(dict.fromkeys(image_notes)) + "\n\n"
     if sent:
         summary += f"✅ **Sent to:** {', '.join(sent)}\n\n"
     if crm_logged:

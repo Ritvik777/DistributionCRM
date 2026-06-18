@@ -15,3 +15,6 @@ requests
 galileo
 simple-salesforce
 mcp
+sentence-transformers
+torch
+pillow
