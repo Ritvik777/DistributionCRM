@@ -27,6 +27,7 @@ from services.vector_db_service import (
 from services.agent_service import ask_agent, confirm_send_email
 from ui.component_vision import render_catalog_matches_panel
 from observability import start_chat_session, get_console_links
+from vector_db.vision import ImageUploadTooLargeError, assert_image_upload_size, max_image_upload_label
 
 APP_NAME = "Product Distribution Agent"
 
@@ -492,7 +493,7 @@ def _render_data_panel() -> None:
             sku = col1.text_input("SKU", key="catalog_component_sku", placeholder="SKU")
             name = col2.text_input("Name", key="catalog_component_name", placeholder="Product name")
             photos = st.file_uploader(
-                "Images",
+                f"Images ({max_image_upload_label()} max each)",
                 type=["png", "jpg", "jpeg", "webp"],
                 key="catalog_component_photo",
                 accept_multiple_files=True,
@@ -500,10 +501,15 @@ def _render_data_panel() -> None:
             )
             if photos and st.button("Add to catalog", use_container_width=True, type="primary", key="add_catalog_btn"):
                 try:
+                    added = 0
                     for photo in photos:
+                        assert_image_upload_size(photo.getvalue())
                         add_component_image(photo, sku=sku, name=name)
-                    st.success(f"Added {len(photos)} photo(s)")
+                        added += 1
+                    st.success(f"Added {added} photo(s)")
                     st.rerun()
+                except ImageUploadTooLargeError as error:
+                    st.error(str(error))
                 except Exception as error:
                     st.error(str(error))
             try:
@@ -658,14 +664,21 @@ def render_chat_composer() -> tuple[str, bytes | None, str]:
         st.markdown('<div class="composer-attach">', unsafe_allow_html=True)
         with st.expander("Attach image", expanded=False):
             attach = st.file_uploader(
-                "Upload",
+                f"Upload ({max_image_upload_label()} max)",
                 type=["png", "jpg", "jpeg", "webp"],
                 key=f"chat_attach_photo_{attach_key}",
                 label_visibility="collapsed",
             )
             if attach is not None:
-                image_bytes = attach.getvalue()
+                raw = attach.getvalue()
                 image_name = getattr(attach, "name", "") or ""
+                try:
+                    assert_image_upload_size(raw)
+                    image_bytes = raw
+                except ImageUploadTooLargeError as error:
+                    st.error(str(error))
+                    st.session_state.chat_attach_key = attach_key + 1
+                    st.rerun()
                 if image_bytes:
                     c1, c2 = st.columns([1, 3])
                     c1.image(image_bytes, width=64)
@@ -714,12 +727,16 @@ def handle_new_prompt(
         precomputed_matches: list[dict] | None = None
         precomputed_kb: list[dict] | None = None
         if query_image_bytes:
-            with st.spinner("Matching image…"):
-                precomputed_matches = match_component_image_bytes(
-                    query_image_bytes,
-                    filename=query_image_name or "query.jpg",
-                )
-                precomputed_kb = _kb_sources_for_matches(precomputed_matches)
+            try:
+                with st.spinner("Matching image…"):
+                    precomputed_matches = match_component_image_bytes(
+                        query_image_bytes,
+                        filename=query_image_name or "query.jpg",
+                    )
+                    precomputed_kb = _kb_sources_for_matches(precomputed_matches)
+            except ImageUploadTooLargeError as error:
+                st.error(str(error))
+                return
 
         try:
             with st.spinner("Thinking…"):

@@ -10,9 +10,26 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
+from config import MAX_COMPONENT_IMAGE_UPLOAD_BYTES
 from llm import get_vision_caption_llm, get_vision_rerank_llm
 
 logger = logging.getLogger(__name__)
+
+
+class ImageUploadTooLargeError(ValueError):
+    """Raised when an uploaded image exceeds MAX_COMPONENT_IMAGE_UPLOAD_BYTES."""
+
+
+def max_image_upload_label() -> str:
+    mb = MAX_COMPONENT_IMAGE_UPLOAD_BYTES // (1024 * 1024)
+    return f"{mb} MB"
+
+
+def assert_image_upload_size(raw: bytes) -> None:
+    if len(raw) > MAX_COMPONENT_IMAGE_UPLOAD_BYTES:
+        raise ImageUploadTooLargeError(
+            f"Image is too large ({len(raw) / (1024 * 1024):.1f} MB). Maximum upload size is {max_image_upload_label()}."
+        )
 
 _MEDIA_TYPES = {
     "jpg": "image/jpeg",
@@ -217,6 +234,7 @@ def rerank_component_candidates(
 
 def prepare_image_bytes(raw: bytes, *, max_edge: int = 1600) -> bytes:
     """Normalize orientation/size so CLIP and Claude see a consistent RGB JPEG."""
+    assert_image_upload_size(raw)
     try:
         from PIL import Image
 
